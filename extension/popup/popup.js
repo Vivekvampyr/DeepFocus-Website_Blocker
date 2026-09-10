@@ -7,6 +7,8 @@ const toggle = document.getElementById("active-toggle");
 const statusLabel = document.getElementById("status-label");
 const blockedCountEl = document.getElementById("blocked-count");
 const siteCountEl = document.getElementById("site-count");
+const accountLabel = document.getElementById("account-label");
+const accountAction = document.getElementById("account-action");
 
 let sites = [];
 let isActive = true;
@@ -25,6 +27,33 @@ toggle.addEventListener("change", () => {
 function updateStats() {
   siteCountEl.textContent = sites.length;
   loadBlockedCount();
+}
+
+function updateAccountUI(authMode, user = null) {
+  if (authMode === "account") {
+    accountLabel.textContent = user?.email || "Account";
+    accountAction.textContent = "Logout";
+    return;
+  }
+
+  accountLabel.textContent = "Guest";
+  accountAction.textContent = "Log in";
+  accountAction.addEventListener("click", async () => {
+      const { authMode } = await chrome.storage.local.get("authMode");
+
+      if (authMode === "account") {
+        await chrome.storage.local.remove([
+          "authMode",
+          "accessToken",
+          "user",
+        ]);
+
+        window.location.href = "login.html";
+        return;
+      }
+
+      window.location.href = "login-form.html";
+    });
 }
 
 async function loadBlockedCount() {
@@ -85,6 +114,8 @@ function render() {
     li.appendChild(label);
     li.appendChild(removeBtn);
     listEl.appendChild(li);
+
+    
   }
 }
 
@@ -134,15 +165,21 @@ input.addEventListener("input", clearError);
 
 // Load saved sites when the popup opens.
 (async function init() {
-  const { authMode } = await chrome.storage.local.get("authMode");
+  const { authMode, user: savedUser } =
+    await chrome.storage.local.get([
+      "authMode",
+      "user",
+    ]);
 
   if (!authMode) {
     window.location.href = "login.html";
     return;
   }
 
+  let user = savedUser;
+
   if (authMode === "account") {
-    const user = await getCurrentUser();
+    user = await getCurrentUser();
 
     if (!user) {
       window.location.href = "login.html";
@@ -163,6 +200,7 @@ input.addEventListener("input", clearError);
 
   toggle.checked = isActive;
   updateStatusLabel();
+  updateAccountUI(authMode, user);
   render();
   loadBlockedCount();
 })();
