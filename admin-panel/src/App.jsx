@@ -10,6 +10,7 @@ import Dashboard from "./pages/Dashboard";
 import Users from "./pages/Users";
 import ProtectedRoute from "./components/ProtectedRoute";
 import AdminLayout from "./layouts/AdminLayout";
+import UserDetails from "./pages/UserDetails";
 
 function App() {
   return (
@@ -48,6 +49,11 @@ function App() {
           <Route
             path="users"
             element={<Users />}
+          />
+
+          <Route
+            path="users/:userId"
+            element={<UserDetails />}
           />
 
         </Route>
