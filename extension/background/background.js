@@ -147,45 +147,97 @@ chrome.runtime.onInstalled.addListener(async () => {
 // COUNT BLOCKED DISTRACTIONS
 // ---------------------------------------------------------
 
-chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
-  // Only count top-level page navigations.
-  if (details.frameId !== 0) return;
+chrome.webNavigation.onBeforeNavigate.addListener(
+  async (details) => {
+    if (details.frameId !== 0) {
+      return;
+    }
 
-  const {
-    blockedSites = [],
-    isActive = true,
-    blockedCount = 0
-  } = await chrome.storage.local.get([
-    "blockedSites",
-    "isActive",
-    "blockedCount"
-  ]);
+    const {
+      blockedSites = [],
+      isActive = true,
+      blockedCount = 0,
+      authMode = "guest",
+      accessToken = null,
+      deviceId = null,
+    } = await chrome.storage.local.get([
+      "blockedSites",
+      "isActive",
+      "blockedCount",
+      "authMode",
+      "accessToken",
+      "deviceId",
+    ]);
 
-  if (!isActive) return;
+    if (!isActive) {
+      return;
+    }
 
-  const url = details.url;
+    try {
+      const hostname =
+        new URL(details.url).hostname.toLowerCase();
 
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-
-    const matchedSite = blockedSites.find((domain) => {
-      return (
-        hostname === domain ||
-        hostname.endsWith(`.${domain}`)
+      const matchedSite = blockedSites.find(
+        (domain) =>
+          hostname === domain ||
+          hostname.endsWith(`.${domain}`)
       );
-    });
 
-    if (!matchedSite) return;
+      if (!matchedSite) {
+        return;
+      }
 
-    const newCount = blockedCount + 1;
+      // -------------------------
+      // LOCAL COUNTER
+      // -------------------------
 
-    await chrome.storage.local.set({
-      blockedCount: newCount
-    });
-  } catch (error) {
-    console.error("Could not process blocked navigation:", error);
+      const newCount = blockedCount + 1;
+
+      await chrome.storage.local.set({
+        blockedCount: newCount,
+      });
+
+
+      // -------------------------
+      // CLOUD ANALYTICS
+      // -------------------------
+
+      if (
+        authMode === "account" &&
+        accessToken
+      ) {
+        try {
+          await fetch(
+            `${API_BASE_URL}/api/block-events`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization:
+                  `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify({
+                domain: matchedSite,
+                device_id: deviceId || null,
+              }),
+            }
+          );
+        } catch (error) {
+          console.error(
+            "Failed to record block event:",
+            error
+          );
+        }
+      }
+
+    } catch (error) {
+      console.error(
+        "Could not process navigation:",
+        error
+      );
+    }
   }
-});
+);
 
 
 // ---------------------------------------------------------

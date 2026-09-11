@@ -5,12 +5,16 @@ from .database import get_db, Base, engine
 from .models.user import User
 from .models.device import Device
 from .models.blocked_site import BlockedSite
+from .models.block_event import BlockEvent
 from .api import auth
 from .api import sites
 from .api import sync
 from .api import settings
 from .api import devices
 from .api import admin
+from .api import block_events
+from .api import admin_analytics
+
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -28,6 +32,8 @@ app.include_router(sync.router)
 app.include_router(settings.router)
 app.include_router(devices.router)
 app.include_router(admin.router)
+app.include_router(block_events.router)
+app.include_router(admin_analytics.router)
 
 app.add_middleware(
     CORSMiddleware,

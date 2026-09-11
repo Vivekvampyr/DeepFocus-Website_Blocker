@@ -56,6 +56,38 @@ async function getCurrentUser() {
   }
 }
 
+async function recordBlockEvent(domain) {
+  const token = await getAuthToken();
+
+  if (!token) {
+    return;
+  }
+
+  const { deviceId } =
+    await chrome.storage.local.get("deviceId");
+
+  try {
+    await fetch(
+      `${API_BASE_URL}/api/block-events`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          domain,
+          device_id: deviceId || null,
+        }),
+      }
+    );
+  } catch (error) {
+    console.error(
+      "Failed to record block event:",
+      error
+    );
+  }
+}
 
 async function addCloudSite(domain) {
   const token = await getAuthToken();
