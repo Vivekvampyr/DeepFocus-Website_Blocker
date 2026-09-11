@@ -1,5 +1,19 @@
 // const API_BASE_URL = "http://127.0.0.1:8000";
-const API_BASE_URL = "https://deepfocus-backend-ep5kwh77c-vampyr1.vercel.app";
+const API_BASE_URL = "https://deepfocus-backend.vercel.app";
+
+function parseErrorMessage(data, defaultMsg) {
+  if (!data) return defaultMsg;
+  if (typeof data.detail === "string") return data.detail;
+  if (Array.isArray(data.detail) && data.detail.length > 0) {
+    return data.detail
+      .map((item) => (typeof item === "string" ? item : item.msg || JSON.stringify(item)))
+      .join(", ");
+  }
+  if (typeof data.message === "string") return data.message;
+  if (typeof data.error === "string") return data.error;
+  if (typeof data.error?.message === "string") return data.error.message;
+  return defaultMsg;
+}
 
 async function getAuthToken() {
   const { accessToken } = await chrome.storage.local.get("accessToken");
@@ -112,7 +126,7 @@ async function addCloudSite(domain) {
 
   if (!response.ok) {
     throw new Error(
-      data.detail || "Could not add the site to the cloud."
+      parseErrorMessage(data, "Could not add the site to the cloud.")
     );
   }
 
@@ -141,7 +155,7 @@ async function deleteCloudSite(siteId) {
 
   if (!response.ok) {
     throw new Error(
-      data.detail || "Could not remove the site from the cloud."
+      parseErrorMessage(data, "Could not remove the site from the cloud.")
     );
   }
 
@@ -245,11 +259,11 @@ async function updateCloudBlockingSetting(enabled) {
     }
   );
 
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
+  const data = await response.json().catch(() => ({}));
 
+  if (!response.ok) {
     throw new Error(
-      data.detail || "Could not update blocking settings."
+      parseErrorMessage(data, "Could not update blocking settings.")
     );
   }
 
@@ -347,19 +361,17 @@ async function registerDevice() {
     }
   );
 
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
+  const data = await response.json().catch(() => ({}));
 
+  if (!response.ok) {
     throw new Error(
-      data.detail || "Could not register this device."
+      parseErrorMessage(data, "Could not register this device.")
     );
   }
 
-  const device = await response.json();
-
   await chrome.storage.local.set({
-    device,
+    device: data,
   });
 
-  return device;
+  return data;
 }

@@ -92,26 +92,70 @@ backBtn.addEventListener("click", (event) => {
 // API
 // ---------------------------------------------------------
 
-async function registerUser() {
-  const response = await fetch(
-    `${API_BASE_URL}/api/auth/register`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: emailInput.value.trim(),
-        password: passwordInput.value,
-      }),
+function formatApiError(response, data, defaultMsg) {
+  if (data) {
+    if (typeof data.detail === "string") {
+      return data.detail;
     }
-  );
+    if (Array.isArray(data.detail) && data.detail.length > 0) {
+      return data.detail
+        .map((item) => (typeof item === "string" ? item : item.msg || JSON.stringify(item)))
+        .join(", ");
+    }
+    if (typeof data.message === "string") {
+      return data.message;
+    }
+    if (typeof data.error === "string") {
+      return data.error;
+    }
+    if (typeof data.error?.message === "string") {
+      return data.error.message;
+    }
+  }
+
+  if (response?.status === 401) {
+    return "Invalid email or password.";
+  }
+  if (response?.status === 409) {
+    return "An account with this email already exists.";
+  }
+  if (response?.status === 422) {
+    return "Please check the form inputs.";
+  }
+  if (response?.status >= 500) {
+    return "Server error. Please try again later.";
+  }
+
+  return defaultMsg;
+}
+
+async function registerUser() {
+  let response;
+  try {
+    response = await fetch(
+      `${API_BASE_URL}/api/auth/register`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: emailInput.value.trim(),
+          password: passwordInput.value,
+        }),
+      }
+    );
+  } catch (err) {
+    throw new Error(
+      `Unable to connect to server at ${API_BASE_URL}. Please check your connection.`
+    );
+  }
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
-      data.detail || "Could not create your account."
+      formatApiError(response, data, "Could not create your account.")
     );
   }
 
@@ -120,25 +164,32 @@ async function registerUser() {
 
 
 async function loginUser() {
-  const response = await fetch(
-    `${API_BASE_URL}/api/auth/login`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: emailInput.value.trim(),
-        password: passwordInput.value,
-      }),
-    }
-  );
+  let response;
+  try {
+    response = await fetch(
+      `${API_BASE_URL}/api/auth/login`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: emailInput.value.trim(),
+          password: passwordInput.value,
+        }),
+      }
+    );
+  } catch (err) {
+    throw new Error(
+      `Unable to connect to server at ${API_BASE_URL}. Please check your connection.`
+    );
+  }
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
-      data.detail || "Invalid email or password."
+      formatApiError(response, data, "Invalid email or password.")
     );
   }
 
