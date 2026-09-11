@@ -7,7 +7,9 @@ import {
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
+import Users from "./pages/Users";
 import ProtectedRoute from "./components/ProtectedRoute";
+import AdminLayout from "./layouts/AdminLayout";
 
 function App() {
   return (
@@ -18,7 +20,7 @@ function App() {
           path="/"
           element={
             <Navigate
-              to="/admin/login"
+              to="/admin/dashboard"
               replace
             />
           }
@@ -30,11 +32,33 @@ function App() {
         />
 
         <Route
-          path="/admin/dashboard"
+          path="/admin"
           element={
             <ProtectedRoute>
-              <Dashboard />
+              <AdminLayout />
             </ProtectedRoute>
+          }
+        >
+
+          <Route
+            path="dashboard"
+            element={<Dashboard />}
+          />
+
+          <Route
+            path="users"
+            element={<Users />}
+          />
+
+        </Route>
+
+        <Route
+          path="*"
+          element={
+            <Navigate
+              to="/admin/dashboard"
+              replace
+            />
           }
         />
 
