@@ -12,6 +12,8 @@ from .api import settings
 from .api import devices
 from .api import admin
 
+from fastapi.middleware.cors import CORSMiddleware
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -26,6 +28,14 @@ app.include_router(sync.router)
 app.include_router(settings.router)
 app.include_router(devices.router)
 app.include_router(admin.router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],           # Allows requests from specific domains
+    allow_credentials=True,          # Allows cookies and authentication headers
+    allow_methods=["*"],             # Allows all HTTP methods (GET, POST, etc.)
+    allow_headers=["*"],             # Allows all request headers
+)
 
 @app.get("/")
 def root():

@@ -120,4 +120,6 @@ def get_me(
     return {
         "id": current_user.id,
         "email": current_user.email,
+        "role": current_user.role,
+        "is_active": current_user.is_active,
     }
