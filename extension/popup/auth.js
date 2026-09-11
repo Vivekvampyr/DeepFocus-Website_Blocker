@@ -1,5 +1,5 @@
 // const API_BASE_URL = "http://127.0.0.1:8000";
-const API_BASE_URL = "https://deepfocus-backend-ep5kwh77c-vampyr1.vercel.app/";
+const API_BASE_URL = "https://deepfocus-backend-ep5kwh77c-vampyr1.vercel.app";
 
 async function getAuthToken() {
   const { accessToken } = await chrome.storage.local.get("accessToken");
