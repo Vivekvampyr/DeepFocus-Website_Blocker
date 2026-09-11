@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
+
 from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
+
 from ..database import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -20,6 +23,12 @@ class User(Base):
 
     password_hash: Mapped[str] = mapped_column(
         String(255),
+        nullable=False,
+    )
+
+    role: Mapped[str] = mapped_column(
+        String(20),
+        default="USER",
         nullable=False,
     )
 

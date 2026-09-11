@@ -10,6 +10,7 @@ from .api import sites
 from .api import sync
 from .api import settings
 from .api import devices
+from .api import admin
 
 Base.metadata.create_all(bind=engine)
 
@@ -24,6 +25,7 @@ app.include_router(sites.router)
 app.include_router(sync.router)
 app.include_router(settings.router)
 app.include_router(devices.router)
+app.include_router(admin.router)
 
 @app.get("/")
 def root():

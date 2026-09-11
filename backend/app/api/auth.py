@@ -34,13 +34,14 @@ JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(
 )
 
 
-def create_access_token(user_id: int) -> str:
+def create_access_token(user_id: int, role: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES
     )
 
     payload = {
         "sub": str(user_id),
+        "role": role,
         "exp": expire,
     }
 
@@ -105,7 +106,7 @@ def login(
             detail="This account is inactive.",
         )
 
-    access_token = create_access_token(user.id)
+    access_token = create_access_token(user.id, user.role)
 
     return {
         "access_token": access_token,
