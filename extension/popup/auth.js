@@ -156,3 +156,69 @@ async function fetchCloudSites() {
     return null;
   }
 }
+
+async function fetchCloudSyncState() {
+  const token = await getAuthToken();
+
+  if (!token) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/sync`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    if (response.status === 401) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error("Could not sync DeepFocus.");
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Sync failed:", error);
+    return null;
+  }
+}
+
+
+async function updateCloudBlockingSetting(enabled) {
+  const token = await getAuthToken();
+
+  if (!token) {
+    return false;
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/settings/blocking`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        blocking_enabled: enabled,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+
+    throw new Error(
+      data.detail || "Could not update blocking settings."
+    );
+  }
+
+  return true;
+}

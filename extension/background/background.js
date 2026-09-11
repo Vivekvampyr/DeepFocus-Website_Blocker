@@ -4,6 +4,12 @@
 // It keeps blocking rules synchronized and tracks how many distractions
 // have been blocked.
 
+const API_BASE_URL = "http://127.0.0.1:8000";
+
+chrome.alarms.create("deepfocus-sync", {
+  periodInMinutes: 1,
+});
+
 function buildRules(sites) {
   return sites.map((domain, index) => ({
     id: index + 1,
@@ -33,6 +39,80 @@ async function syncRules(sites, isActive) {
   });
 }
 
+async function syncAccountState() {
+  const {
+    authMode,
+    accessToken,
+    isActive = true,
+  } = await chrome.storage.local.get([
+    "authMode",
+    "accessToken",
+    "isActive",
+  ]);
+
+  if (authMode !== "account" || !accessToken) {
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/sync`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
+
+    if (response.status === 401) {
+      await chrome.storage.local.set({
+        authMode: "guest",
+      });
+
+      await chrome.storage.local.remove([
+        "accessToken",
+        "user",
+      ]);
+
+      return;
+    }
+
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+
+    const sites = data.blocked_sites.map(
+      (site) => site.domain
+    );
+
+    const newIsActive = data.blocking_enabled;
+
+    await chrome.storage.local.set({
+      blockedSites: sites,
+      isActive: newIsActive,
+    });
+
+    await syncRules(
+      sites,
+      newIsActive
+    );
+  } catch (error) {
+    console.error(
+      "Background sync failed:",
+      error
+    );
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "deepfocus-sync") {
+    syncAccountState();
+  }
+});
+
 async function initRules() {
   const {
     blockedSites = [],
@@ -52,6 +132,15 @@ async function initRules() {
 
 chrome.runtime.onInstalled.addListener(initRules);
 chrome.runtime.onStartup.addListener(initRules);
+
+chrome.runtime.onStartup.addListener(async () => {
+  await initRules();
+  await syncAccountState();
+});
+chrome.runtime.onInstalled.addListener(async () => {
+  await initRules();
+  await syncAccountState();
+});
 
 
 // ---------------------------------------------------------

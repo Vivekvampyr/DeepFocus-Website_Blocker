@@ -3,7 +3,7 @@
   "name": "DeepFocus — Website Blocker",
   "version": "1.0",
   "description": "Block distracting sites like Facebook, Instagram, and YouTube.",
-  "permissions": ["storage", "declarativeNetRequest", "webNavigation"],
+  "permissions": ["storage", "declarativeNetRequest", "webNavigation", "alarms"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup/popup.html",

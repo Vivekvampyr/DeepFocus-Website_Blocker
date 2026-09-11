@@ -9,4 +9,8 @@ class SyncSite(BaseModel):
 
 class SyncResponse(BaseModel):
     blocked_sites: list[SyncSite]
-    is_active: bool
+    blocking_enabled: bool
+
+class SyncRequest(BaseModel):
+    blocked_sites: list[str]
+    blocking_enabled: bool

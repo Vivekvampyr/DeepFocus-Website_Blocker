@@ -96,10 +96,38 @@ accountAction.addEventListener("click", async (event) => {
 // TOGGLE
 // ---------------------------------------------------------
 
-toggle.addEventListener("change", () => {
+toggle.addEventListener("change", async () => {
+  const previousValue = isActive;
+
   isActive = toggle.checked;
+
   updateStatusLabel();
-  persist();
+
+  await persist();
+
+  if (authMode !== "account") {
+    return;
+  }
+
+  try {
+    await updateCloudBlockingSetting(isActive);
+  } catch (error) {
+    console.error(
+      "Failed to sync blocking setting:",
+      error
+    );
+
+    // Revert if cloud update failed.
+    isActive = previousValue;
+    toggle.checked = previousValue;
+
+    updateStatusLabel();
+    await persist();
+
+    showError(
+      "Could not sync your blocking setting."
+    );
+  }
 });
 
 
@@ -454,41 +482,47 @@ async function initializeAuth() {
 // CLOUD SYNC
 // ---------------------------------------------------------
 
-async function loadCloudSites() {
+async function syncFromCloud() {
   if (authMode !== "account") {
-    return;
+    return false;
   }
 
-  const fetchedSites = await fetchCloudSites();
+  const state = await fetchCloudSyncState();
 
-  if (fetchedSites === null) {
-    return;
+  if (!state) {
+    return false;
   }
-
 
   cloudSiteIds = new Map(
-    fetchedSites.map((site) => [
+    state.blocked_sites.map((site) => [
       site.domain,
       site.id,
     ])
   );
 
-
-  sites = fetchedSites.map(
+  sites = state.blocked_sites.map(
     (site) => site.domain
   );
 
+  isActive = state.blocking_enabled;
 
   await chrome.storage.local.set({
     blockedSites: sites,
+    isActive,
   });
 
+  toggle.checked = isActive;
+
+  updateStatusLabel();
+  render();
 
   chrome.runtime.sendMessage({
     type: "SITES_UPDATED",
     sites,
     isActive,
   });
+
+  return true;
 }
 
 
@@ -527,7 +561,7 @@ async function loadCloudSites() {
 
   // Only logged-in users sync with backend.
   if (authMode === "account") {
-    await loadCloudSites();
+    await syncFromCloud();
 
     render();
   }
