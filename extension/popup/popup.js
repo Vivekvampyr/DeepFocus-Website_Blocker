@@ -3,13 +3,10 @@ const input = document.getElementById("site-input");
 const errorMsg = document.getElementById("error-msg");
 const listEl = document.getElementById("site-list");
 const emptyMsg = document.getElementById("empty-msg");
-
 const toggle = document.getElementById("active-toggle");
 const statusLabel = document.getElementById("status-label");
-
 const blockedCountEl = document.getElementById("blocked-count");
 const siteCountEl = document.getElementById("site-count");
-
 const accountLabel = document.getElementById("account-label");
 const accountAction = document.getElementById("account-action");
 
@@ -428,28 +425,9 @@ async function initializeAuth() {
   if (authMode === "account") {
     const user = await getCurrentUser();
 
-    // Check storage again because getCurrentUser()
-    // is asynchronous and logout can happen meanwhile.
-    const {
-      authMode: latestAuthMode
-    } = await chrome.storage.local.get("authMode");
-
-    if (latestAuthMode !== "account") {
-      authMode = "guest";
-      currentUser = null;
-
-      updateAccountUI("guest");
-
-      return true;
-    }
-
     if (!user) {
       authMode = "guest";
       currentUser = null;
-
-      await chrome.storage.local.set({
-        authMode: "guest",
-      });
 
       updateAccountUI("guest");
 
@@ -459,6 +437,15 @@ async function initializeAuth() {
     currentUser = user;
 
     updateAccountUI("account", user);
+
+    try {
+      await registerDevice();
+    } catch (error) {
+      console.error(
+        "Device registration/update failed:",
+        error
+      );
+    }
 
     return true;
   }

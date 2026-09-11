@@ -222,3 +222,111 @@ async function updateCloudBlockingSetting(enabled) {
 
   return true;
 }
+
+async function getDeviceId() {
+  const { deviceId } = await chrome.storage.local.get("deviceId");
+
+  if (deviceId) {
+    return deviceId;
+  }
+
+  const newDeviceId = crypto.randomUUID();
+
+  await chrome.storage.local.set({
+    deviceId: newDeviceId,
+  });
+
+  return newDeviceId;
+}
+
+function getBrowserName() {
+  const ua = navigator.userAgent;
+
+  if (ua.includes("Edg/")) {
+    return "Edge";
+  }
+
+  if (ua.includes("Firefox/")) {
+    return "Firefox";
+  }
+
+  if (ua.includes("Chrome/")) {
+    return "Chrome";
+  }
+
+  if (ua.includes("Safari/")) {
+    return "Safari";
+  }
+
+  return "Unknown";
+}
+
+
+function getOperatingSystem() {
+  const ua = navigator.userAgent;
+
+  if (ua.includes("Windows")) {
+    return "Windows";
+  }
+
+  if (ua.includes("Mac OS")) {
+    return "macOS";
+  }
+
+  if (ua.includes("Linux")) {
+    return "Linux";
+  }
+
+  if (ua.includes("Android")) {
+    return "Android";
+  }
+
+  if (ua.includes("iPhone") || ua.includes("iPad")) {
+    return "iOS";
+  }
+
+  return "Unknown";
+}
+
+async function registerDevice() {
+  const token = await getAuthToken();
+
+  if (!token) {
+    return null;
+  }
+
+  const deviceId = await getDeviceId();
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/devices/register`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        device_id: deviceId,
+        browser: getBrowserName(),
+        operating_system: getOperatingSystem(),
+        extension_version: "1.0.0",
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+
+    throw new Error(
+      data.detail || "Could not register this device."
+    );
+  }
+
+  const device = await response.json();
+
+  await chrome.storage.local.set({
+    device,
+  });
+
+  return device;
+}

@@ -10,5 +10,7 @@ guestBtn.addEventListener("click", async () => {
 });
 
 loginBtn.addEventListener("click", () => {
-  window.location.href = "login-form.html";
+  window.location.href = chrome.runtime.getURL(
+    "popup/login-form.html"
+  );
 });

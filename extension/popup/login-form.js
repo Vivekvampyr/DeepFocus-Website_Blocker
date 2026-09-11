@@ -1,16 +1,21 @@
-const API_BASE_URL = "http://127.0.0.1:8000";
-
 const form = document.getElementById("auth-form");
 const emailInput = document.getElementById("email");
 const passwordInput = document.getElementById("password");
+
 const errorMsg = document.getElementById("error-msg");
 const submitBtn = document.getElementById("submit-btn");
+
 const formTitle = document.getElementById("form-title");
 const formSubtitle = document.getElementById("form-subtitle");
 const modeToggle = document.getElementById("mode-toggle");
 const backBtn = document.getElementById("back-btn");
 
 let isLoginMode = true;
+
+
+// ---------------------------------------------------------
+// UI
+// ---------------------------------------------------------
 
 function showError(message) {
   errorMsg.textContent = message;
@@ -50,16 +55,44 @@ function updateFormMode() {
   }
 }
 
-modeToggle.addEventListener("click", () => {
+
+// ---------------------------------------------------------
+// LOGIN / REGISTER MODE TOGGLE
+// ---------------------------------------------------------
+
+modeToggle.type = "button";
+
+modeToggle.addEventListener("click", (event) => {
+  event.preventDefault();
+
   isLoginMode = !isLoginMode;
+
+  passwordInput.value = "";
+
   updateFormMode();
 });
 
-backBtn.addEventListener("click", () => {
-  window.location.href = "login.html";
+
+// ---------------------------------------------------------
+// BACK
+// ---------------------------------------------------------
+
+backBtn.type = "button";
+
+backBtn.addEventListener("click", (event) => {
+  event.preventDefault();
+
+  window.location.href = chrome.runtime.getURL(
+    "popup/login.html"
+  );
 });
 
-async function register() {
+
+// ---------------------------------------------------------
+// API
+// ---------------------------------------------------------
+
+async function registerUser() {
   const response = await fetch(
     `${API_BASE_URL}/api/auth/register`,
     {
@@ -74,7 +107,7 @@ async function register() {
     }
   );
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
@@ -85,7 +118,8 @@ async function register() {
   return data;
 }
 
-async function login() {
+
+async function loginUser() {
   const response = await fetch(
     `${API_BASE_URL}/api/auth/login`,
     {
@@ -100,7 +134,7 @@ async function login() {
     }
   );
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
@@ -108,52 +142,125 @@ async function login() {
     );
   }
 
+  if (!data.access_token) {
+    throw new Error(
+      "Login succeeded but no authentication token was returned."
+    );
+  }
+
   return data;
 }
+
+
+// ---------------------------------------------------------
+// SUBMIT
+// ---------------------------------------------------------
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   clearError();
 
+  const email = emailInput.value.trim();
+  const password = passwordInput.value;
+
+  if (!email || !password) {
+    showError("Email and password are required.");
+    return;
+  }
+
   submitBtn.disabled = true;
-  submitBtn.textContent = isLoginMode
-    ? "Logging in..."
-    : "Creating account...";
 
   try {
+    let loginData;
+
+    // -------------------------
+    // REGISTER
+    // -------------------------
+
     if (!isLoginMode) {
-      await register();
+      submitBtn.textContent = "Creating account...";
 
-      // After registration, automatically log the user in.
-      isLoginMode = true;
+      await registerUser();
 
-      const data = await login();
-
-      await chrome.storage.local.set({
-        authMode: "account",
-        accessToken: data.access_token,
-      });
-
-      window.location.href = chrome.runtime.getURL("popup/popup.html");
-      return;
+      // Automatically log in after registration.
+      loginData = await loginUser();
     }
 
-    const data = await login();
+    // -------------------------
+    // LOGIN
+    // -------------------------
+
+    else {
+      submitBtn.textContent = "Logging in...";
+
+      loginData = await loginUser();
+    }
+
+
+    // -------------------------
+    // SAVE AUTH STATE
+    // -------------------------
 
     await chrome.storage.local.set({
       authMode: "account",
-      accessToken: data.access_token,
+      accessToken: loginData.access_token,
     });
 
-    window.location.href = chrome.runtime.getURL("popup/popup.html");
+    console.log(
+      "DeepFocus authentication successful."
+    );
+
+
+    // -------------------------
+    // DEVICE REGISTRATION
+    // -------------------------
+
+    try {
+      const device = await registerDevice();
+
+      console.log(
+        "DeepFocus device registered:",
+        device
+      );
+    } catch (error) {
+      console.error(
+        "Device registration failed:",
+        error
+      );
+
+      // Do NOT prevent login because of this.
+    }
+
+
+    // -------------------------
+    // GO TO MAIN POPUP
+    // -------------------------
+
+    window.location.href = chrome.runtime.getURL(
+      "popup/popup.html"
+    );
 
   } catch (error) {
-    showError(error.message);
-  } finally {
+    console.error(
+      "DeepFocus authentication error:",
+      error
+    );
+
+    showError(
+      error.message ||
+      "Something went wrong. Please try again."
+    );
+
     submitBtn.disabled = false;
+
     updateFormMode();
   }
 });
+
+
+// ---------------------------------------------------------
+// INITIAL UI
+// ---------------------------------------------------------
 
 updateFormMode();
