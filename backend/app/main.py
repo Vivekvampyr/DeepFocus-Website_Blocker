@@ -6,6 +6,7 @@ from .models.user import User
 from .models.blocked_site import BlockedSite
 from .api import auth
 from .api import sites
+from .api import sync
 
 Base.metadata.create_all(bind=engine)
 
@@ -17,6 +18,7 @@ app = FastAPI(
 
 app.include_router(auth.router)
 app.include_router(sites.router)
+app.include_router(sync.router)
 
 @app.get("/")
 def root():
