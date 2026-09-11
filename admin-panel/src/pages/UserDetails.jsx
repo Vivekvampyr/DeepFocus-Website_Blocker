@@ -125,6 +125,74 @@ function UserDetails() {
     }
   }
 
+  async function removeBlockedSite(siteId) {
+    const token = localStorage.getItem(
+      "admin_token"
+    );
+
+    if (!token) {
+      navigate("/admin/login", {
+        replace: true,
+      });
+
+      return;
+    }
+
+    setAuthToken(token);
+
+    try {
+      await api.delete(
+        `/api/admin/users/${userId}/sites/${siteId}`
+      );
+
+      // Remove the site from the current UI.
+      setData((previous) => ({
+        ...previous,
+        blocked_sites:
+          previous.blocked_sites.filter(
+            (site) => site.id !== siteId
+          ),
+        user: {
+          ...previous.user,
+          sync_version:
+            previous.user.sync_version + 1,
+        },
+      }));
+
+    } catch (err) {
+      console.error(
+        "Failed to remove blocked site:",
+        err
+      );
+
+      if (
+        err.response?.status === 401 ||
+        err.response?.status === 403
+      ) {
+        localStorage.removeItem(
+          "admin_token"
+        );
+
+        localStorage.removeItem(
+          "admin_user"
+        );
+
+        setAuthToken(null);
+
+        navigate("/admin/login", {
+          replace: true,
+        });
+
+        return;
+      }
+
+      setError(
+        err.response?.data?.detail ||
+          "Unable to remove blocked site."
+      );
+    }
+  }
+
   useEffect(() => {
     loadUser();
   }, [userId]);
@@ -291,16 +359,26 @@ function UserDetails() {
                 className="detail-row"
                 key={site.id}
               >
-                <strong>
-                  {site.domain}
-                </strong>
+                <div>
+                  <strong>{site.domain}</strong>
 
-                <span>
-                  Added{" "}
-                  {new Date(
-                    site.created_at
-                  ).toLocaleDateString()}
-                </span>
+                  <span>
+                    Added{" "}
+                    {new Date(
+                      site.created_at
+                    ).toLocaleDateString()}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  className="site-remove-button"
+                  onClick={() =>
+                    removeBlockedSite(site.id)
+                  }
+                >
+                  Remove
+                </button>
               </div>
             ))
           )}

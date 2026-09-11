@@ -256,3 +256,49 @@ def get_user_sites(
         for site in sites
     ]
 
+@router.delete("/users/{user_id}/sites/{site_id}")
+def remove_user_blocked_site(
+    user_id: int,
+    site_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    site = (
+        db.query(BlockedSite)
+        .filter(
+            BlockedSite.id == site_id,
+            BlockedSite.user_id == user_id,
+        )
+        .first()
+    )
+
+    if not site:
+        raise HTTPException(
+            status_code=404,
+            detail="Blocked site not found.",
+        )
+
+    domain = site.domain
+
+    db.delete(site)
+
+    # This is an account-wide change.
+    # Other logged-in devices will detect the new version
+    # during their next sync.
+    user.sync_version += 1
+
+    db.commit()
+
+    return {
+        "message": "Blocked site removed.",
+        "domain": domain,
+        "sync_version": user.sync_version,
+    }

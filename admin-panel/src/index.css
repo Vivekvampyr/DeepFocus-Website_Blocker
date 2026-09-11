@@ -682,3 +682,21 @@ input {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.site-remove-button {
+  padding: 7px 10px;
+
+  border: 1px solid #533333;
+  border-radius: 6px;
+
+  background: transparent;
+  color: #d96c6c;
+
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.site-remove-button:hover {
+  border-color: #d96c6c;
+  background: #241b1b;
+}
