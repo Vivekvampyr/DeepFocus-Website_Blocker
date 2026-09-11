@@ -135,7 +135,7 @@ form.addEventListener("submit", async (event) => {
         accessToken: data.access_token,
       });
 
-      window.location.href = "popup.html";
+      window.location.href = chrome.runtime.getURL("popup/popup.html");
       return;
     }
 
@@ -146,7 +146,7 @@ form.addEventListener("submit", async (event) => {
       accessToken: data.access_token,
     });
 
-    window.location.href = "popup.html";
+    window.location.href = chrome.runtime.getURL("popup/popup.html");
 
   } catch (error) {
     showError(error.message);
