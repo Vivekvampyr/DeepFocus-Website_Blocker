@@ -1,21 +1,15 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-
 from ..database import get_db
 from ..models.blocked_site import BlockedSite
 from ..models.user import User
-from ..schemas.sync import (
-    SyncRequest,
-    SyncResponse,
-    SyncSite,
-)
+from ..schemas.sync import (SyncRequest, SyncResponse, SyncSite)
 from .dependencies import get_current_user
 
 router = APIRouter(
     prefix="/api/sync",
     tags=["Sync"],
 )
-
 
 def build_sync_response(
     user: User,
@@ -32,8 +26,8 @@ def build_sync_response(
             for site in sites
         ],
         blocking_enabled=user.blocking_enabled,
+        sync_version=user.sync_version,
     )
-
 
 @router.get(
     "",
@@ -67,6 +61,16 @@ def sync_state(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Reject stale clients.
+    if data.sync_version != current_user.sync_version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Sync conflict. Local state is outdated.",
+                "server_sync_version": current_user.sync_version,
+            },
+        )
+
     normalized_domains = sorted(
         {
             domain.strip().lower()
@@ -90,7 +94,6 @@ def sync_state(
 
     incoming_domains = set(normalized_domains)
 
-    # Add new sites.
     for domain in normalized_domains:
         if domain not in existing_by_domain:
             db.add(
@@ -100,17 +103,17 @@ def sync_state(
                 )
             )
 
-    # Remove sites that no longer exist in the incoming list.
     for site in existing_sites:
         if site.domain not in incoming_domains:
             db.delete(site)
 
-    # Update the user's blocking preference.
     current_user.blocking_enabled = data.blocking_enabled
+
+    # One successful account-wide change = one new version.
+    current_user.sync_version += 1
 
     db.commit()
 
-    # Read the final canonical state from the database.
     final_sites = (
         db.query(BlockedSite)
         .filter(

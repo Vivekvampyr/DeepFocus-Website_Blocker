@@ -32,7 +32,7 @@ def update_blocking_settings(
     db: Session = Depends(get_db),
 ):
     current_user.blocking_enabled = data.blocking_enabled
-
+    current_user.sync_version += 1
     db.commit()
     db.refresh(current_user)
 

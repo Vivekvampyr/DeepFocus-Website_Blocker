@@ -6,7 +6,10 @@ from ..database import Base
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        index=True,
+    )
 
     email: Mapped[str] = mapped_column(
         String(255),
@@ -29,6 +32,11 @@ class User(Base):
     blocking_enabled: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
+        nullable=False,
+    )
+
+    sync_version: Mapped[int] = mapped_column(
+        default=0,
         nullable=False,
     )
 

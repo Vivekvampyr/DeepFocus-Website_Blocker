@@ -16,6 +16,8 @@ let isActive = true;
 let authMode = "guest";
 let currentUser = null;
 
+let syncVersion = 0;
+
 // domain -> backend database ID
 let cloudSiteIds = new Map();
 
@@ -480,6 +482,8 @@ async function syncFromCloud() {
     return false;
   }
 
+  syncVersion = state.sync_version;
+
   cloudSiteIds = new Map(
     state.blocked_sites.map((site) => [
       site.domain,
@@ -528,11 +532,14 @@ async function syncFromCloud() {
   const {
     blockedSites = [],
     isActive: savedActive = true,
+    syncVersion: savedSyncVersion = 0,
   } = await chrome.storage.local.get([
     "blockedSites",
     "isActive",
+    "syncVersion",
   ]);
 
+  syncVersion = savedSyncVersion;
 
   sites = blockedSites;
 

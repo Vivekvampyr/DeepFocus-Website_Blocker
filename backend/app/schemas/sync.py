@@ -10,7 +10,9 @@ class SyncSite(BaseModel):
 class SyncResponse(BaseModel):
     blocked_sites: list[SyncSite]
     blocking_enabled: bool
+    sync_version: int
 
 class SyncRequest(BaseModel):
     blocked_sites: list[str]
     blocking_enabled: bool
+    sync_version: int

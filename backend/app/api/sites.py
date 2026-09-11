@@ -78,6 +78,7 @@ def add_blocked_site(
     )
 
     db.add(site)
+    current_user.sync_version += 1
     db.commit()
     db.refresh(site)
 
@@ -106,6 +107,7 @@ def delete_blocked_site(
         )
 
     db.delete(site)
+    current_user.sync_version += 1
     db.commit()
 
     return {
