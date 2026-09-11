@@ -193,6 +193,68 @@ function UserDetails() {
     }
   }
 
+  async function revokeDevice(deviceId) {
+    const token = localStorage.getItem(
+      "admin_token"
+    );
+
+    if (!token) {
+      navigate("/admin/login", {
+        replace: true,
+      });
+
+      return;
+    }
+
+    setAuthToken(token);
+    setError("");
+
+    try {
+      await api.delete(
+        `/api/admin/users/${userId}/devices/${deviceId}`
+      );
+
+      setData((previous) => ({
+        ...previous,
+        devices: previous.devices.filter(
+          (device) => device.id !== deviceId
+        ),
+      }));
+
+    } catch (err) {
+      console.error(
+        "Failed to revoke device:",
+        err
+      );
+
+      if (
+        err.response?.status === 401 ||
+        err.response?.status === 403
+      ) {
+        localStorage.removeItem(
+          "admin_token"
+        );
+
+        localStorage.removeItem(
+          "admin_user"
+        );
+
+        setAuthToken(null);
+
+        navigate("/admin/login", {
+          replace: true,
+        });
+
+        return;
+      }
+
+      setError(
+        err.response?.data?.detail ||
+          "Unable to revoke device."
+      );
+    }
+  }
+
   useEffect(() => {
     loadUser();
   }, [userId]);
@@ -431,6 +493,16 @@ function UserDetails() {
                       device.last_seen
                     ).toLocaleString()}
                   </span>
+
+                  <button
+                    type="button"
+                    className="device-revoke-button"
+                    onClick={() =>
+                      revokeDevice(device.id)
+                    }
+                  >
+                    Revoke
+                  </button>
                 </div>
               </div>
             ))

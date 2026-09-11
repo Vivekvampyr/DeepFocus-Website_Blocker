@@ -302,3 +302,42 @@ def remove_user_blocked_site(
         "domain": domain,
         "sync_version": user.sync_version,
     }
+
+@router.delete("/users/{user_id}/devices/{device_id}")
+def revoke_user_device(
+    user_id: int,
+    device_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    device = (
+        db.query(Device)
+        .filter(
+            Device.id == device_id,
+            Device.user_id == user_id,
+        )
+        .first()
+    )
+
+    if not device:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found.",
+        )
+
+    db.delete(device)
+
+    db.commit()
+
+    return {
+        "message": "Device revoked.",
+        "device_id": device_id,
+    }

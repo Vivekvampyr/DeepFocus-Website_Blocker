@@ -700,3 +700,23 @@ input {
   border-color: #d96c6c;
   background: #241b1b;
 }
+
+.device-revoke-button {
+  margin-top: 7px;
+
+  padding: 5px 9px;
+
+  border: 1px solid #533333;
+  border-radius: 5px;
+
+  background: transparent;
+  color: #d96c6c;
+
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.device-revoke-button:hover {
+  border-color: #d96c6c;
+  background: #241b1b;
+}
