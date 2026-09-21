@@ -12,7 +12,15 @@ chrome.alarms.create("deepfocus-sync", {
 });
 
 function buildRules(sites) {
-  return sites.map((domain, index) => ({
+  const cleanSites = Array.from(
+    new Set(
+      sites
+        .map((d) => (typeof d === "string" ? d.trim().toLowerCase() : ""))
+        .filter((d) => d.length > 0)
+    )
+  );
+
+  return cleanSites.map((domain, index) => ({
     id: index + 1,
     priority: 1,
     action: {
@@ -23,21 +31,26 @@ function buildRules(sites) {
     },
     condition: {
       urlFilter: `||${domain}^`,
+      isUrlFilterCaseSensitive: false,
       resourceTypes: ["main_frame"]
     }
   }));
 }
 
 async function syncRules(sites, isActive) {
-  const existing = await chrome.declarativeNetRequest.getDynamicRules();
+  try {
+    const existing = await chrome.declarativeNetRequest.getDynamicRules();
 
-  const removeRuleIds = existing.map((rule) => rule.id);
-  const addRules = isActive ? buildRules(sites) : [];
+    const removeRuleIds = existing.map((rule) => rule.id);
+    const addRules = isActive ? buildRules(sites) : [];
 
-  await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds,
-    addRules
-  });
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds,
+      addRules
+    });
+  } catch (error) {
+    console.error("[DeepFocus] Failed to sync declarativeNetRequest rules:", error);
+  }
 }
 
 async function syncAccountState() {
@@ -45,10 +58,12 @@ async function syncAccountState() {
     authMode,
     accessToken,
     isActive = true,
+    blockedSites: currentLocal = [],
   } = await chrome.storage.local.get([
     "authMode",
     "accessToken",
     "isActive",
+    "blockedSites",
   ]);
 
   if (authMode !== "account" || !accessToken) {
@@ -85,19 +100,46 @@ async function syncAccountState() {
 
     const data = await response.json();
 
-    const sites = data.blocked_sites.map(
+    const cloudSites = (data.blocked_sites || []).map(
       (site) => site.domain
     );
 
-    const newIsActive = data.blocking_enabled;
+    // Merge: DO NOT wipe local sites if cloud returns empty or partial list
+    const merged = Array.from(
+      new Set([...currentLocal, ...cloudSites])
+    ).sort();
+
+    // Reconcile: upload any local sites not yet in the cloud
+    const cloudDomainSet = new Set(cloudSites);
+    for (const localDomain of currentLocal) {
+      if (!cloudDomainSet.has(localDomain)) {
+        try {
+          await fetch(`${API_BASE_URL}/api/sites`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({ domain: localDomain }),
+          });
+        } catch (e) {
+          console.warn("[DeepFocus] Could not sync local site to cloud:", localDomain, e);
+        }
+      }
+    }
+
+    const newIsActive =
+      data.blocking_enabled !== undefined
+        ? data.blocking_enabled
+        : isActive;
 
     await chrome.storage.local.set({
-      blockedSites: sites,
+      blockedSites: merged,
       isActive: newIsActive,
     });
 
     await syncRules(
-      sites,
+      merged,
       newIsActive
     );
   } catch (error) {
@@ -131,21 +173,22 @@ async function initRules() {
   await chrome.storage.local.set({ blockedCount });
 }
 
-chrome.runtime.onInstalled.addListener(initRules);
-chrome.runtime.onStartup.addListener(initRules);
+// Ensure rules are initialized when service worker boots up
+initRules();
 
-chrome.runtime.onStartup.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async () => {
   await initRules();
   await syncAccountState();
 });
-chrome.runtime.onInstalled.addListener(async () => {
+
+chrome.runtime.onStartup.addListener(async () => {
   await initRules();
   await syncAccountState();
 });
 
 
 // ---------------------------------------------------------
-// COUNT BLOCKED DISTRACTIONS
+// COUNT BLOCKED DISTRACTIONS & FAILSAFE REDIRECTION
 // ---------------------------------------------------------
 
 chrome.webNavigation.onBeforeNavigate.addListener(
@@ -186,6 +229,13 @@ chrome.webNavigation.onBeforeNavigate.addListener(
 
       if (!matchedSite) {
         return;
+      }
+
+      // Failsafe redirection in case DeclarativeNetRequest hasn't completed dynamic rule update
+      if (!details.url.includes("blocked.html")) {
+        chrome.tabs.update(details.tabId, {
+          url: chrome.runtime.getURL(`blocked.html?site=${encodeURIComponent(matchedSite)}`)
+        });
       }
 
       // -------------------------

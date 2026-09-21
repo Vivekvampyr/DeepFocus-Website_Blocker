@@ -96,36 +96,16 @@ accountAction.addEventListener("click", async (event) => {
 // ---------------------------------------------------------
 
 toggle.addEventListener("change", async () => {
-  const previousValue = isActive;
-
   isActive = toggle.checked;
 
   updateStatusLabel();
 
   await persist();
 
-  if (authMode !== "account") {
-    return;
-  }
-
-  try {
-    await updateCloudBlockingSetting(isActive);
-  } catch (error) {
-    console.error(
-      "Failed to sync blocking setting:",
-      error
-    );
-
-    // Revert if cloud update failed.
-    isActive = previousValue;
-    toggle.checked = previousValue;
-
-    updateStatusLabel();
-    await persist();
-
-    showError(
-      "Could not sync your blocking setting."
-    );
+  if (authMode === "account") {
+    updateCloudBlockingSetting(isActive).catch((error) => {
+      console.warn("Failed to sync blocking setting to cloud:", error);
+    });
   }
 });
 
@@ -265,44 +245,26 @@ async function addSite(rawValue) {
 
   clearError();
 
+  // Optimistically add site locally immediately (0ms delay!)
+  sites.push(domain);
+  sites.sort();
 
-  // -------------------------
-  // GUEST
-  // -------------------------
+  render();
+  await persist();
 
-  if (authMode !== "account") {
-    sites.push(domain);
-    sites.sort();
-
-    render();
-    await persist();
-
-    return;
-  }
-
-
-  // -------------------------
-  // ACCOUNT
-  // -------------------------
-
-  try {
-    const cloudSite = await addCloudSite(domain);
-
-    cloudSiteIds.set(
-      cloudSite.domain,
-      cloudSite.id
-    );
-
-    sites.push(domain);
-    sites.sort();
-
-    render();
-    await persist();
-
-  } catch (error) {
-    console.error("Add cloud site failed:", error);
-
-    showError(error.message);
+  // If in account mode, sync with cloud in background
+  if (authMode === "account") {
+    addCloudSite(domain)
+      .then(async (cloudSite) => {
+        cloudSiteIds.set(cloudSite.domain, cloudSite.id);
+        const cloudSiteMapObj = Object.fromEntries(cloudSiteIds);
+        await chrome.storage.local.set({
+          cloudSiteMap: cloudSiteMapObj,
+        });
+      })
+      .catch((error) => {
+        console.warn("Add cloud site in background failed:", error);
+      });
   }
 }
 
@@ -314,63 +276,25 @@ async function addSite(rawValue) {
 async function removeSite(domain) {
   clearError();
 
-  // -------------------------
-  // GUEST
-  // -------------------------
-
-  if (authMode !== "account") {
-    sites = sites.filter(
-      (site) => site !== domain
-    );
-
-    render();
-    await persist();
-
-    return;
-  }
-
-
-  // -------------------------
-  // ACCOUNT
-  // -------------------------
-
   const siteId = cloudSiteIds.get(domain);
 
-  console.log(
-    "Removing site:",
-    domain,
-    "Cloud ID:",
-    siteId
-  );
+  // Optimistically remove locally immediately (0ms delay!)
+  sites = sites.filter((site) => site !== domain);
+  cloudSiteIds.delete(domain);
 
-  if (!siteId) {
-    showError(
-      "Could not find this site's cloud record."
-    );
+  render();
+  await persist();
 
-    return;
-  }
+  // If in account mode, update cloud in background
+  if (authMode === "account") {
+    const cloudSiteMapObj = Object.fromEntries(cloudSiteIds);
+    chrome.storage.local.set({ cloudSiteMap: cloudSiteMapObj });
 
-
-  try {
-    await deleteCloudSite(siteId);
-
-    cloudSiteIds.delete(domain);
-
-    sites = sites.filter(
-      (site) => site !== domain
-    );
-
-    render();
-    await persist();
-
-  } catch (error) {
-    console.error(
-      "Remove cloud site failed:",
-      error
-    );
-
-    showError(error.message);
+    if (siteId) {
+      deleteCloudSite(siteId).catch((error) => {
+        console.warn("Remove cloud site in background failed:", error);
+      });
+    }
   }
 }
 
@@ -393,6 +317,7 @@ input.addEventListener("input", clearError);
 
 
 // ---------------------------------------------------------
+// ---------------------------------------------------------
 // AUTH STATE
 // ---------------------------------------------------------
 
@@ -408,67 +333,32 @@ async function initializeAuth() {
   authMode = savedAuthMode;
   currentUser = savedUser;
 
+  updateAccountUI(authMode, currentUser);
 
-  // -------------------------
-  // GUEST
-  // -------------------------
-
-  if (authMode === "guest") {
-    updateAccountUI("guest");
-
-    return true;
-  }
-
-
-  // -------------------------
-  // ACCOUNT
-  // -------------------------
-
+  // Background token verification (non-blocking)
   if (authMode === "account") {
-    const user = await getCurrentUser();
-
-    if (!user) {
-      authMode = "guest";
-      currentUser = null;
-
-      updateAccountUI("guest");
-
-      return true;
-    }
-
-    currentUser = user;
-
-    updateAccountUI("account", user);
-
-    try {
-      await registerDevice();
-    } catch (error) {
-      console.error(
-        "Device registration/update failed:",
-        error
-      );
-    }
-
-    return true;
+    getCurrentUser()
+      .then((user) => {
+        if (!user) {
+          authMode = "guest";
+          currentUser = null;
+          updateAccountUI("guest");
+        } else if (!user.offline) {
+          currentUser = user;
+          updateAccountUI("account", user);
+        }
+      })
+      .catch((e) => {
+        console.warn("Background auth check warning:", e);
+      });
   }
-
-
-  // Safety fallback
-
-  authMode = "guest";
-
-  await chrome.storage.local.set({
-    authMode: "guest",
-  });
-
-  updateAccountUI("guest");
 
   return true;
 }
 
 
 // ---------------------------------------------------------
-// CLOUD SYNC
+// CLOUD SYNC (SMART 2-WAY MERGE, NEVER WIPES LOCAL SITES)
 // ---------------------------------------------------------
 
 async function syncFromCloud() {
@@ -476,87 +366,114 @@ async function syncFromCloud() {
     return false;
   }
 
-  const state = await fetchCloudSyncState();
+  try {
+    const state = await fetchCloudSyncState();
 
-  if (!state) {
+    if (!state) {
+      return false;
+    }
+
+    syncVersion = state.sync_version;
+
+    const cloudSitesList = state.blocked_sites || [];
+    const newCloudMap = new Map();
+    for (const site of cloudSitesList) {
+      newCloudMap.set(site.domain, site.id);
+    }
+
+    // Reconcile: upload any local sites not yet in the cloud
+    const localSitesToUpload = sites.filter((domain) => !newCloudMap.has(domain));
+    for (const domain of localSitesToUpload) {
+      try {
+        const added = await addCloudSite(domain);
+        newCloudMap.set(added.domain, added.id);
+      } catch (e) {
+        console.warn("Could not sync local site to cloud:", domain, e);
+      }
+    }
+
+    // Merge domains without losing any local sites
+    const mergedSites = Array.from(
+      new Set([...sites, ...cloudSitesList.map((s) => s.domain)])
+    ).sort();
+
+    sites = mergedSites;
+    cloudSiteIds = newCloudMap;
+
+    if (state.blocking_enabled !== undefined) {
+      isActive = state.blocking_enabled;
+      toggle.checked = isActive;
+      updateStatusLabel();
+    }
+
+    const cloudSiteMapObj = Object.fromEntries(newCloudMap);
+    await chrome.storage.local.set({
+      blockedSites: sites,
+      isActive,
+      cloudSiteMap: cloudSiteMapObj,
+      syncVersion,
+    });
+
+    render();
+
+    chrome.runtime.sendMessage({
+      type: "SITES_UPDATED",
+      sites,
+      isActive,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Cloud sync failed:", error);
     return false;
   }
-
-  syncVersion = state.sync_version;
-
-  cloudSiteIds = new Map(
-    state.blocked_sites.map((site) => [
-      site.domain,
-      site.id,
-    ])
-  );
-
-  sites = state.blocked_sites.map(
-    (site) => site.domain
-  );
-
-  isActive = state.blocking_enabled;
-
-  await chrome.storage.local.set({
-    blockedSites: sites,
-    isActive,
-  });
-
-  toggle.checked = isActive;
-
-  updateStatusLabel();
-  render();
-
-  chrome.runtime.sendMessage({
-    type: "SITES_UPDATED",
-    sites,
-    isActive,
-  });
-
-  return true;
 }
 
 
 // ---------------------------------------------------------
-// INITIALIZATION
+// INITIALIZATION (INSTANT 0MS LOAD FROM CACHE)
 // ---------------------------------------------------------
 
 (async function init() {
-  const authenticated = await initializeAuth();
-
-  if (!authenticated) {
-    return;
-  }
-
-
+  // 1. Instantly read all saved state from local storage (0ms)
   const {
     blockedSites = [],
     isActive: savedActive = true,
     syncVersion: savedSyncVersion = 0,
+    authMode: savedAuthMode = "guest",
+    user: savedUser = null,
+    cloudSiteMap = {},
+    blockedCount = 0,
   } = await chrome.storage.local.get([
     "blockedSites",
     "isActive",
     "syncVersion",
+    "authMode",
+    "user",
+    "cloudSiteMap",
+    "blockedCount",
   ]);
 
-  syncVersion = savedSyncVersion;
-
-  sites = blockedSites;
-
+  sites = Array.isArray(blockedSites) ? [...blockedSites] : [];
   isActive = savedActive;
+  syncVersion = savedSyncVersion;
+  authMode = savedAuthMode;
+  currentUser = savedUser;
+  cloudSiteIds = new Map(Object.entries(cloudSiteMap || {}));
 
+  // 2. Render UI immediately! (ZERO delay for the user)
   toggle.checked = isActive;
-
   updateStatusLabel();
-
+  updateAccountUI(authMode, currentUser);
+  blockedCountEl.textContent = blockedCount;
   render();
 
-  await loadBlockedCount();
+  // 3. Asynchronously verify auth & sync in background without blocking popup
+  initializeAuth();
 
-  // Only logged-in users sync with backend.
   if (authMode === "account") {
-    await syncFromCloud();
-
-    render();
+    syncFromCloud().catch((err) => {
+      console.warn("Initial cloud sync error:", err);
+    });
   }
 })();
