@@ -168,7 +168,7 @@ def forgot_password(
 
     reset_url = (
         f"{FRONTEND_URL.rstrip('/')}"
-        f"/reset-password?token={token}"
+        f"/reset-password#token={token}"
     )
 
     try:
