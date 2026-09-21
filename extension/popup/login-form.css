@@ -136,3 +136,37 @@ input:focus {
 .mode-toggle:hover {
   color: var(--text);
 }
+
+/* ---------------------------------------------------------
+   FORGOT PASSWORD
+--------------------------------------------------------- */
+
+.forgot-password-btn {
+  display: block;
+  width: 100%;
+  margin: 10px 0 2px;
+
+  padding: 4px 0;
+
+  background: transparent;
+  border: none;
+
+  color: var(--muted);
+
+  font-size: 13px;
+  font-family: inherit;
+
+  cursor: pointer;
+  text-align: center;
+}
+
+.forgot-password-btn:hover {
+  color: var(--brass);
+  text-decoration: underline;
+}
+
+.forgot-password-btn:focus-visible {
+  outline: 1px solid var(--brass);
+  outline-offset: 3px;
+  border-radius: 3px;
+}

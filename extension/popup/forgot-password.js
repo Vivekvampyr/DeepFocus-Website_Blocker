@@ -119,13 +119,14 @@ form.addEventListener(
         );
       }
 
-
+      
       showSuccess(
-        data.message ||
-          "If an account exists, a password reset link has been sent."
+        "If an account exists, a password reset link has been sent to your email."
       );
 
       emailInput.value = "";
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Reset Link Sent";
 
 
     } catch (error) {
@@ -141,8 +142,13 @@ form.addEventListener(
 
 
     } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = "Send Reset Link";
+      if (!successMsg.hidden) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Reset Link Sent";
+      } else {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Send Reset Link";
+      }
     }
   }
 );
