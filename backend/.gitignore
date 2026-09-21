@@ -3,3 +3,4 @@ venv/
 .env
 __pycache__/
 *.pyc
+.full_backend_code.txt/

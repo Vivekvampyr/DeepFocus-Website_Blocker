@@ -9,6 +9,9 @@ const formTitle = document.getElementById("form-title");
 const formSubtitle = document.getElementById("form-subtitle");
 const modeToggle = document.getElementById("mode-toggle");
 const backBtn = document.getElementById("back-btn");
+const forgotPasswordBtn = document.getElementById(
+  "forgot-password-btn"
+);
 
 let isLoginMode = true;
 
@@ -84,6 +87,20 @@ backBtn.addEventListener("click", (event) => {
 
   window.location.href = chrome.runtime.getURL(
     "popup/login.html"
+  );
+});
+
+// ---------------------------------------------------------
+// FORGOT PASSWORD
+// ---------------------------------------------------------
+
+forgotPasswordBtn.type = "button";
+
+forgotPasswordBtn.addEventListener("click", (event) => {
+  event.preventDefault();
+
+  window.location.href = chrome.runtime.getURL(
+    "popup/forgot-password.html"
   );
 });
 

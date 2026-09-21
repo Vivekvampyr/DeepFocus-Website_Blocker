@@ -1,0 +1,1700 @@
+// backend\app\api\admin_analytics.py
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from ..database import get_db
+from ..models.block_event import BlockEvent
+from ..models.device import Device
+from ..models.user import User
+from .admin_dependencies import require_admin
+
+router = APIRouter(
+    prefix="/api/admin/analytics",
+    tags=["Admin Analytics"],
+)
+
+
+def today_start_utc():
+    now = datetime.now(timezone.utc)
+
+    return now.replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+
+@router.get("/overview")
+def get_analytics_overview(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    today_start = today_start_utc()
+
+    total_block_attempts = (
+        db.query(BlockEvent).count()
+    )
+
+    today_attempts = (
+        db.query(BlockEvent)
+        .filter(
+            BlockEvent.created_at >= today_start
+        )
+        .count()
+    )
+
+    return {
+        "total_block_attempts":
+            total_block_attempts,
+        "today_block_attempts":
+            today_attempts,
+    }
+
+
+@router.get("/most-blocked")
+def get_most_blocked_sites(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(
+            BlockEvent.domain,
+            func.count(BlockEvent.id).label("attempts"),
+        )
+        .group_by(BlockEvent.domain)
+        .order_by(
+            func.count(BlockEvent.id).desc()
+        )
+        .limit(10)
+        .all()
+    )
+
+    return [
+        {
+            "domain": domain,
+            "attempts": attempts,
+        }
+        for domain, attempts in rows
+    ]
+
+
+@router.get("/by-user")
+def get_attempts_by_user(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(
+            User.id,
+            User.email,
+            func.count(BlockEvent.id).label(
+                "attempts"
+            ),
+        )
+        .outerjoin(
+            BlockEvent,
+            BlockEvent.user_id == User.id,
+        )
+        .group_by(
+            User.id,
+            User.email,
+        )
+        .order_by(
+            func.count(BlockEvent.id).desc()
+        )
+        .limit(50)
+        .all()
+    )
+
+    return [
+        {
+            "user_id": user_id,
+            "email": email,
+            "attempts": attempts,
+        }
+        for user_id, email, attempts in rows
+    ]
+
+
+@router.get("/by-device")
+def get_attempts_by_device(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(
+            Device.id,
+            Device.browser,
+            Device.operating_system,
+            User.email,
+            func.count(BlockEvent.id).label(
+                "attempts"
+            ),
+        )
+        .join(
+            User,
+            User.id == Device.user_id,
+        )
+        .outerjoin(
+            BlockEvent,
+            BlockEvent.device_id == Device.id,
+        )
+        .group_by(
+            Device.id,
+            Device.browser,
+            Device.operating_system,
+            User.email,
+        )
+        .order_by(
+            func.count(BlockEvent.id).desc()
+        )
+        .limit(50)
+        .all()
+    )
+
+    return [
+        {
+            "device_id": device_id,
+            "browser": browser,
+            "operating_system":
+                operating_system,
+            "email": email,
+            "attempts": attempts,
+        }
+        for (
+            device_id,
+            browser,
+            operating_system,
+            email,
+            attempts,
+        ) in rows
+    ]
+
+// backend\app\api\admin_dependencies.py
+
+from fastapi import Depends, HTTPException, status
+from ..models.user import User
+from .dependencies import get_current_user
+
+def require_admin(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if current_user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required.",
+        )
+
+    return current_user
+
+// backend\app\api\admin.py
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.blocked_site import BlockedSite
+from ..models.device import Device
+from ..models.user import User
+from .admin_dependencies import require_admin
+from ..schemas.admin import UserStatusUpdate
+from sqlalchemy import func
+
+router = APIRouter(prefix="/api/admin", tags=["Admin"])
+
+@router.get("/dashboard")
+def get_dashboard(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    total_users = db.query(User).count()
+
+    active_users = (
+        db.query(User)
+        .filter(User.is_active.is_(True))
+        .count()
+    )
+
+    total_devices = db.query(Device).count()
+
+    total_blocked_sites = (
+        db.query(BlockedSite).count()
+    )
+
+    return {
+        "total_users": total_users,
+        "active_users": active_users,
+        "total_devices": total_devices,
+        "total_blocked_sites": total_blocked_sites,
+    }
+
+@router.get("/users")
+def get_users(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    users = (
+        db.query(User)
+        .order_by(User.created_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": user.id,
+            "email": user.email,
+            "role": user.role,
+            "is_active": user.is_active,
+            "blocking_enabled": user.blocking_enabled,
+            "sync_version": user.sync_version,
+            "created_at": user.created_at,
+        }
+        for user in users
+    ]
+
+@router.get("/users/search")
+def search_users(
+    q: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    search_term = q.strip().lower()
+
+    if not search_term:
+        return []
+
+    users = (
+        db.query(User)
+        .filter(
+            func.lower(User.email).contains(search_term)
+        )
+        .order_by(User.created_at.desc())
+        .limit(50)
+        .all()
+    )
+
+    return [
+        {
+            "id": user.id,
+            "email": user.email,
+            "role": user.role,
+            "is_active": user.is_active,
+            "blocking_enabled": user.blocking_enabled,
+            "sync_version": user.sync_version,
+            "created_at": user.created_at,
+        }
+        for user in users
+    ]
+
+@router.get("/users/{user_id}")
+def get_user_details(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+
+    if not user:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    devices = (
+        db.query(Device)
+        .filter(Device.user_id == user.id)
+        .order_by(Device.last_seen.desc())
+        .all()
+    )
+
+    blocked_sites = (
+        db.query(BlockedSite)
+        .filter(BlockedSite.user_id == user.id)
+        .order_by(BlockedSite.domain.asc())
+        .all()
+    )
+
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "role": user.role,
+            "is_active": user.is_active,
+            "blocking_enabled": user.blocking_enabled,
+            "sync_version": user.sync_version,
+            "created_at": user.created_at,
+        },
+        "devices": [
+            {
+                "id": device.id,
+                "device_id": device.device_id,
+                "browser": device.browser,
+                "operating_system": device.operating_system,
+                "extension_version": device.extension_version,
+                "created_at": device.created_at,
+                "last_seen": device.last_seen,
+            }
+            for device in devices
+        ],
+        "blocked_sites": [
+            {
+                "id": site.id,
+                "domain": site.domain,
+                "created_at": site.created_at,
+                "updated_at": site.updated_at,
+            }
+            for site in blocked_sites
+        ],
+    }
+
+@router.patch("/users/{user_id}/status")
+def update_user_status(
+    user_id: int,
+    data: UserStatusUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    # Prevent an admin from accidentally disabling their own account.
+    if user.id == admin.id and not data.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="You cannot deactivate your own admin account.",
+        )
+
+    user.is_active = data.is_active
+
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "is_active": user.is_active,
+    }
+
+@router.get("/users/{user_id}/devices")
+def get_user_devices(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    devices = (
+        db.query(Device)
+        .filter(Device.user_id == user_id)
+        .order_by(Device.last_seen.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": device.id,
+            "device_id": device.device_id,
+            "browser": device.browser,
+            "operating_system": device.operating_system,
+            "extension_version": device.extension_version,
+            "created_at": device.created_at,
+            "last_seen": device.last_seen,
+        }
+        for device in devices
+    ]
+
+@router.get("/users/{user_id}/sites")
+def get_user_sites(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    sites = (
+        db.query(BlockedSite)
+        .filter(BlockedSite.user_id == user_id)
+        .order_by(BlockedSite.domain.asc())
+        .all()
+    )
+
+    return [
+        {
+            "id": site.id,
+            "domain": site.domain,
+            "created_at": site.created_at,
+            "updated_at": site.updated_at,
+        }
+        for site in sites
+    ]
+
+@router.delete("/users/{user_id}/sites/{site_id}")
+def remove_user_blocked_site(
+    user_id: int,
+    site_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    site = (
+        db.query(BlockedSite)
+        .filter(
+            BlockedSite.id == site_id,
+            BlockedSite.user_id == user_id,
+        )
+        .first()
+    )
+
+    if not site:
+        raise HTTPException(
+            status_code=404,
+            detail="Blocked site not found.",
+        )
+
+    domain = site.domain
+
+    db.delete(site)
+
+    # This is an account-wide change.
+    # Other logged-in devices will detect the new version
+    # during their next sync.
+    user.sync_version += 1
+
+    db.commit()
+
+    return {
+        "message": "Blocked site removed.",
+        "domain": domain,
+        "sync_version": user.sync_version,
+    }
+
+@router.delete("/users/{user_id}/devices/{device_id}")
+def revoke_user_device(
+    user_id: int,
+    device_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    device = (
+        db.query(Device)
+        .filter(
+            Device.id == device_id,
+            Device.user_id == user_id,
+        )
+        .first()
+    )
+
+    if not device:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found.",
+        )
+
+    db.delete(device)
+
+    db.commit()
+
+    return {
+        "message": "Device revoked.",
+        "device_id": device_id,
+    }
+
+// backend\app\api\auth.py
+
+import os
+from datetime import datetime, timedelta, timezone
+
+from dotenv import load_dotenv
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from jose import jwt
+from ..api.dependencies import get_current_user
+
+from ..database import get_db
+from ..schemas.auth import (
+    LoginRequest,
+    LoginResponse,
+    RegisterRequest,
+    RegisterResponse,
+)
+from ..services.auth_service import (
+    create_user,
+    get_user_by_email,
+    verify_password,
+)
+
+load_dotenv()
+
+router = APIRouter(
+    prefix="/api/auth",
+    tags=["Authentication"],
+)
+
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(
+    os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60")
+)
+
+
+def create_access_token(user_id: int, role: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(
+        minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+
+    payload = {
+        "sub": str(user_id),
+        "role": role,
+        "exp": expire,
+    }
+
+    return jwt.encode(
+        payload,
+        JWT_SECRET_KEY,
+        algorithm=JWT_ALGORITHM,
+    )
+
+
+@router.post(
+    "/register",
+    response_model=RegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register(
+    data: RegisterRequest,
+    db: Session = Depends(get_db),
+):
+    existing_user = get_user_by_email(db, data.email)
+
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
+
+    user = create_user(
+        db=db,
+        email=data.email,
+        password=data.password,
+    )
+
+    return {
+        "id": user.id,
+        "email": user.email,
+    }
+
+
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+)
+def login(
+    data: LoginRequest,
+    db: Session = Depends(get_db),
+):
+    user = get_user_by_email(db, data.email)
+
+    if not user or not verify_password(
+        data.password,
+        user.password_hash,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is inactive.",
+        )
+
+    access_token = create_access_token(user.id, user.role)
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+    }
+
+@router.get("/me")
+def get_me(
+    current_user=Depends(get_current_user),
+):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role,
+        "is_active": current_user.is_active,
+    }
+
+// backend\app\api\block_events.py
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.block_event import BlockEvent
+from ..models.device import Device
+from ..models.user import User
+from ..schemas.block_events import (BlockEventCreate, BlockEventResponse)
+from .dependencies import get_current_user
+
+router = APIRouter(
+    prefix="/api/block-events",
+    tags=["Block Events"],
+)
+
+@router.post(
+    "",
+    response_model=BlockEventResponse,
+    status_code=201,
+)
+def create_block_event(
+    data: BlockEventCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    device = None
+
+    if data.device_id:
+        device = (
+            db.query(Device)
+            .filter(
+                Device.user_id == current_user.id,
+                Device.device_id == data.device_id,
+            )
+            .first()
+        )
+
+        # Unknown device_id should not be associated
+        # with another user's device.
+        if not device:
+            device = None
+
+    domain = data.domain.strip().lower()
+
+    event = BlockEvent(
+        user_id=current_user.id,
+        device_id=device.id if device else None,
+        domain=domain,
+    )
+
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+
+    return event
+
+// backend\app\api\dependencies.py
+
+import os
+from dotenv import load_dotenv
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.user import User
+
+load_dotenv()
+
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+
+security = HTTPBearer()
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+) -> User:
+    token = credentials.credentials
+
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired authentication token.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+        )
+
+        user_id = payload.get("sub")
+
+        if user_id is None:
+            raise credentials_exception
+
+        user = db.get(User, int(user_id))
+
+    except (JWTError, ValueError, TypeError):
+        raise credentials_exception
+
+    if user is None:
+        raise credentials_exception
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is inactive.",
+        )
+
+    return user
+
+// backend\app\api\devices.py
+
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.device import Device
+from ..models.user import User
+from ..schemas.devices import (DeviceRegisterRequest, DeviceResponse)
+from .dependencies import get_current_user
+
+router = APIRouter(
+    prefix="/api/devices",
+    tags=["Devices"],
+)
+
+@router.post(
+    "/register",
+    response_model=DeviceResponse,
+)
+
+def register_device(
+    data: DeviceRegisterRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    device = (
+        db.query(Device)
+        .filter(
+            Device.user_id == current_user.id,
+            Device.device_id == data.device_id,
+        )
+        .first()
+    )
+
+    now = datetime.now(timezone.utc)
+
+    if device:
+        device.browser = data.browser
+        device.operating_system = data.operating_system
+        device.extension_version = data.extension_version
+        device.last_seen = now
+    else:
+        device = Device(
+            user_id=current_user.id,
+            device_id=data.device_id,
+            browser=data.browser,
+            operating_system=data.operating_system,
+            extension_version=data.extension_version,
+            last_seen=now,
+        )
+
+        db.add(device)
+
+    db.commit()
+    db.refresh(device)
+    return device
+
+@router.get(
+    "",
+    response_model=list[DeviceResponse],
+)
+def get_devices(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(Device)
+        .filter(Device.user_id == current_user.id)
+        .order_by(Device.last_seen.desc())
+        .all()
+    )
+
+// backend\app\api\settings.py
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.user import User
+from ..schemas.settings import (BlockingSettingsResponse, BlockingSettingsUpdate)
+from .dependencies import get_current_user
+
+router = APIRouter(
+    prefix="/api/settings",
+    tags=["Settings"],
+)
+
+@router.get(
+    "/blocking",
+    response_model=BlockingSettingsResponse,
+)
+def get_blocking_settings(
+    current_user: User = Depends(get_current_user),
+):
+    return {
+        "blocking_enabled": current_user.blocking_enabled,
+    }
+
+
+@router.patch(
+    "/blocking",
+    response_model=BlockingSettingsResponse,
+)
+def update_blocking_settings(
+    data: BlockingSettingsUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user.blocking_enabled = data.blocking_enabled
+    current_user.sync_version += 1
+    db.commit()
+    db.refresh(current_user)
+
+    return {
+        "blocking_enabled": current_user.blocking_enabled,
+    }
+
+// backend\app\api\sites.py
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.blocked_site import BlockedSite
+from ..models.user import User
+from ..schemas.sites import (BlockedSiteCreate, BlockedSiteResponse)
+from .dependencies import get_current_user
+
+router = APIRouter(
+    prefix="/api/sites",
+    tags=["Blocked Sites"],
+)
+
+def normalize_domain(domain: str) -> str:
+    domain = domain.strip().lower()
+
+    if domain.startswith("http://"):
+        domain = domain[7:]
+
+    elif domain.startswith("https://"):
+        domain = domain[8:]
+
+    if domain.startswith("www."):
+        domain = domain[4:]
+
+    domain = domain.split("/", 1)[0]
+    domain = domain.split("?", 1)[0]
+
+    return domain
+
+
+@router.get(
+    "",
+    response_model=list[BlockedSiteResponse],
+)
+def get_blocked_sites(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(BlockedSite)
+        .filter(BlockedSite.user_id == current_user.id)
+        .order_by(BlockedSite.domain.asc())
+        .all()
+    )
+
+
+@router.post(
+    "",
+    response_model=BlockedSiteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_blocked_site(
+    data: BlockedSiteCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    domain = normalize_domain(data.domain)
+
+    existing = (
+        db.query(BlockedSite)
+        .filter(
+            BlockedSite.user_id == current_user.id,
+            BlockedSite.domain == domain,
+        )
+        .first()
+    )
+
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This site is already blocked.",
+        )
+
+    site = BlockedSite(
+        user_id=current_user.id,
+        domain=domain,
+    )
+
+    db.add(site)
+    current_user.sync_version += 1
+    db.commit()
+    db.refresh(site)
+
+    return site
+
+
+@router.delete("/{site_id}")
+def delete_blocked_site(
+    site_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    site = (
+        db.query(BlockedSite)
+        .filter(
+            BlockedSite.id == site_id,
+            BlockedSite.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not site:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Blocked site not found.",
+        )
+
+    db.delete(site)
+    current_user.sync_version += 1
+    db.commit()
+
+    return {
+        "message": "Blocked site removed."
+    }
+
+// backend\app\api\sync.py
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..models.blocked_site import BlockedSite
+from ..models.user import User
+from ..schemas.sync import (SyncRequest, SyncResponse, SyncSite)
+from .dependencies import get_current_user
+
+router = APIRouter(
+    prefix="/api/sync",
+    tags=["Sync"],
+)
+
+def build_sync_response(
+    user: User,
+    sites: list[BlockedSite],
+) -> SyncResponse:
+    return SyncResponse(
+        blocked_sites=[
+            SyncSite(
+                id=site.id,
+                domain=site.domain,
+                created_at=site.created_at,
+                updated_at=site.updated_at,
+            )
+            for site in sites
+        ],
+        blocking_enabled=user.blocking_enabled,
+        sync_version=user.sync_version,
+    )
+
+@router.get(
+    "",
+    response_model=SyncResponse,
+)
+def get_sync_state(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    sites = (
+        db.query(BlockedSite)
+        .filter(
+            BlockedSite.user_id == current_user.id
+        )
+        .order_by(BlockedSite.domain.asc())
+        .all()
+    )
+
+    return build_sync_response(
+        current_user,
+        sites,
+    )
+
+
+@router.post(
+    "",
+    response_model=SyncResponse,
+)
+def sync_state(
+    data: SyncRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Reject stale clients.
+    if data.sync_version != current_user.sync_version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Sync conflict. Local state is outdated.",
+                "server_sync_version": current_user.sync_version,
+            },
+        )
+
+    normalized_domains = sorted(
+        {
+            domain.strip().lower()
+            for domain in data.blocked_sites
+            if domain.strip()
+        }
+    )
+
+    existing_sites = (
+        db.query(BlockedSite)
+        .filter(
+            BlockedSite.user_id == current_user.id
+        )
+        .all()
+    )
+
+    existing_by_domain = {
+        site.domain: site
+        for site in existing_sites
+    }
+
+    incoming_domains = set(normalized_domains)
+
+    for domain in normalized_domains:
+        if domain not in existing_by_domain:
+            db.add(
+                BlockedSite(
+                    user_id=current_user.id,
+                    domain=domain,
+                )
+            )
+
+    for site in existing_sites:
+        if site.domain not in incoming_domains:
+            db.delete(site)
+
+    current_user.blocking_enabled = data.blocking_enabled
+
+    # One successful account-wide change = one new version.
+    current_user.sync_version += 1
+
+    db.commit()
+
+    final_sites = (
+        db.query(BlockedSite)
+        .filter(
+            BlockedSite.user_id == current_user.id
+        )
+        .order_by(BlockedSite.domain.asc())
+        .all()
+    )
+
+    return build_sync_response(
+        current_user,
+        final_sites,
+    )
+
+// backend\app\models\block_event.py
+
+from datetime import datetime, timezone
+from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column
+from ..database import Base
+
+class BlockEvent(Base):
+    __tablename__ = "block_events"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        index=True,
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    device_id: Mapped[int | None] = mapped_column(
+        ForeignKey("devices.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    domain: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+// backend\app\models\blocked_site.py
+
+from datetime import datetime, timezone
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
+from ..database import Base
+
+class BlockedSite(Base):
+    __tablename__ = "blocked_sites"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    domain: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "domain",
+            name="uq_user_blocked_domain",
+        ),
+    )
+
+// backend\app\models\device.py
+
+from datetime import datetime, timezone
+from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column
+from ..database import Base
+
+class Device(Base):
+    __tablename__ = "devices"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        index=True,
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    device_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+
+    browser: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    operating_system: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    extension_version: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    last_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+// backend\app\models\password_reset_token.py
+
+from sqlalchemy import Column, Integer, ForeignKey, String, DateTime, Boolean
+import datetime
+from app.database import Base
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    token = Column(String(255), unique=True, nullable=False)
+
+    expires_at = Column(DateTime, nullable=False)
+
+    used = Column(Boolean, default=False)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+// backend\app\models\user.py
+
+from datetime import datetime, timezone
+
+from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from ..database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        index=True,
+    )
+
+    email: Mapped[str] = mapped_column(
+        String(255),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+
+    password_hash: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    role: Mapped[str] = mapped_column(
+        String(20),
+        default="USER",
+        nullable=False,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
+    blocking_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
+    sync_version: Mapped[int] = mapped_column(
+        default=0,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+// backend\app\schemas\admin.py
+
+from datetime import datetime
+from pydantic import BaseModel
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool
+
+class AdminUserSummary(BaseModel):
+    id: int
+    email: str
+    role: str
+    is_active: bool
+    blocking_enabled: bool
+    sync_version: int
+    created_at: datetime
+
+// backend\app\schemas\auth.py
+
+from pydantic import BaseModel, EmailStr, Field
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+
+
+class RegisterResponse(BaseModel):
+    id: int
+    email: EmailStr
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str
+
+// backend\app\schemas\block_events.py
+
+from datetime import datetime
+from pydantic import BaseModel, Field
+
+class BlockEventCreate(BaseModel):
+    domain: str = Field(
+        min_length=3,
+        max_length=255,
+    )
+    device_id: str | None = None
+
+class BlockEventResponse(BaseModel):
+    id: int
+    domain: str
+    created_at: datetime
+
+// backend\app\schemas\devices.py
+
+from datetime import datetime
+from pydantic import BaseModel
+
+class DeviceRegisterRequest(BaseModel):
+    device_id: str
+    browser: str
+    operating_system: str
+    extension_version: str
+
+class DeviceResponse(BaseModel):
+    id: int
+    device_id: str
+    browser: str
+    operating_system: str
+    extension_version: str
+    created_at: datetime
+    last_seen: datetime
+
+// backend\app\schemas\password_reset_tokens.py
+
+from pydantic import BaseModel, EmailStr
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+// backend\app\schemas\settings.py
+
+from pydantic import BaseModel
+
+class BlockingSettingsUpdate(BaseModel):
+    blocking_enabled: bool
+
+class BlockingSettingsResponse(BaseModel):
+    blocking_enabled: bool
+
+// backend\app\schemas\sites.py
+
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field
+
+class BlockedSiteCreate(BaseModel):
+    domain: str = Field(
+        min_length=3,
+        max_length=255,
+    )
+
+class BlockedSiteResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    domain: str
+    created_at: datetime
+    updated_at: datetime
+
+// backend\app\schemas\sync.py
+
+from datetime import datetime
+from pydantic import BaseModel
+
+class SyncSite(BaseModel):
+    id: int
+    domain: str
+    created_at: datetime
+    updated_at: datetime
+
+class SyncResponse(BaseModel):
+    blocked_sites: list[SyncSite]
+    blocking_enabled: bool
+    sync_version: int
+
+class SyncRequest(BaseModel):
+    blocked_sites: list[str]
+    blocking_enabled: bool
+    sync_version: int
+
+// backend\app\services\auth_service.py
+
+from passlib.context import CryptContext
+from sqlalchemy.orm import Session
+
+from ..models.user import User
+
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+)
+
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(
+    plain_password: str,
+    hashed_password: str,
+) -> bool:
+    return pwd_context.verify(
+        plain_password,
+        hashed_password,
+    )
+
+
+def get_user_by_email(
+    db: Session,
+    email: str,
+) -> User | None:
+    return (
+        db.query(User)
+        .filter(User.email == email.lower())
+        .first()
+    )
+
+
+def create_user(
+    db: Session,
+    email: str,
+    password: str,
+) -> User:
+    user = User(
+        email=email.lower(),
+        password_hash=get_password_hash(password),
+    )
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return user
+
+// backend\app\services\email_service.py
+
+import resend
+
+resend.api_key = settings.RESEND_API_KEY
+
+
+def send_password_reset_email(
+    email: str,
+    reset_url: str,
+):
+    resend.Emails.send({
+        "from": settings.FROM_EMAIL,
+        "to": email,
+        "subject": "Reset your DeepFocus password",
+        "html": f"""
+        <h2>Reset Password</h2>
+
+        <p>
+            Click the link below to reset your password:
+        </p>
+
+        <a href="{reset_url}">
+            Reset Password
+        </a>
+
+        <p>
+            This link expires in 1 hour.
+        </p>
+        """
+    })
+
+// backend\app\database.py
+
+import os
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set in .env")
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=1, max_overflow=0, connect_args={"sslmode": "require"})
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+// backend\app\index.py
+
+from .main import app
+
+// backend\app\main.py
+
+from fastapi import FastAPI, Depends
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from .database import get_db, Base, engine
+from .models.user import User
+from .models.device import Device
+from .models.blocked_site import BlockedSite
+from .models.block_event import BlockEvent
+from .api import auth
+from .api import sites
+from .api import sync
+from .api import settings
+from .api import devices
+from .api import admin
+from .api import block_events
+from .api import admin_analytics
+
+
+from fastapi.middleware.cors import CORSMiddleware
+
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(
+    title="DeepFocus API",
+    description="Backend API for the DeepFocus browser extension",
+    version="2.0.0",
+)
+
+app.include_router(auth.router)
+app.include_router(sites.router)
+app.include_router(sync.router)
+app.include_router(settings.router)
+app.include_router(devices.router)
+app.include_router(admin.router)
+app.include_router(block_events.router)
+app.include_router(admin_analytics.router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],           # Allows requests from specific domains
+    allow_credentials=True,          # Allows cookies and authentication headers
+    allow_methods=["*"],             # Allows all HTTP methods (GET, POST, etc.)
+    allow_headers=["*"],             # Allows all request headers
+)
+
+@app.get("/")
+def root():
+    return {
+        "message": "DeepFocus API is running"
+    }
+
+
+@app.get("/health")
+def health_check(db: Session = Depends(get_db)):
+    db.execute(text("SELECT 1"))
+
+    return {
+        "status": "ok",
+        "database": "connected",
+    }
+
+@app.get("/users/count")
+def users_count(db: Session = Depends(get_db)):
+    count = db.query(User).count()
+    return {
+        "users": count
+    }
+

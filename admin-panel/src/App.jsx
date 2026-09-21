@@ -11,6 +11,7 @@ import Users from "./pages/Users";
 import ProtectedRoute from "./components/ProtectedRoute";
 import AdminLayout from "./layouts/AdminLayout";
 import UserDetails from "./pages/UserDetails";
+import ResetPassword from "./pages/ResetPassword";
 
 function App() {
   return (
@@ -30,6 +31,11 @@ function App() {
         <Route
           path="/admin/login"
           element={<Login />}
+        />
+
+        <Route
+          path="/reset-password"
+          element={<ResetPassword />}
         />
 
         <Route

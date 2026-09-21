@@ -6,6 +6,7 @@ from .models.user import User
 from .models.device import Device
 from .models.blocked_site import BlockedSite
 from .models.block_event import BlockEvent
+from .models.password_reset_token import PasswordResetToken
 from .api import auth
 from .api import sites
 from .api import sync
