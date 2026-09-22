@@ -14,6 +14,7 @@ class RegisterResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    device_id: str | None = None
 
 
 class LoginResponse(BaseModel):

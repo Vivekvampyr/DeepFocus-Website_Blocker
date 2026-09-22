@@ -210,15 +210,21 @@ function UserDetails() {
     setError("");
 
     try {
-      await api.delete(
+      const response = await api.delete(
         `/api/admin/users/${userId}/devices/${deviceId}`
       );
 
       setData((previous) => ({
         ...previous,
-        devices: previous.devices.filter(
-          (device) => device.id !== deviceId
+        devices: previous.devices.map((device) =>
+          device.id === deviceId ? { ...device, is_revoked: true } : device
         ),
+        user: {
+          ...previous.user,
+          sync_version:
+            response.data?.sync_version ||
+            (previous.user.sync_version + 1),
+        },
       }));
 
     } catch (err) {
@@ -494,15 +500,21 @@ function UserDetails() {
                     ).toLocaleString()}
                   </span>
 
-                  <button
-                    type="button"
-                    className="device-revoke-button"
-                    onClick={() =>
-                      revokeDevice(device.id)
-                    }
-                  >
-                    Revoke
-                  </button>
+                  {device.is_revoked ? (
+                    <span className="status inactive" style={{ marginTop: "7px" }}>
+                      Revoked
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="device-revoke-button"
+                      onClick={() =>
+                        revokeDevice(device.id)
+                      }
+                    >
+                      Revoke
+                    </button>
+                  )}
                 </div>
               </div>
             ))

@@ -13,5 +13,6 @@ class DeviceResponse(BaseModel):
     browser: str
     operating_system: str
     extension_version: str
+    is_revoked: bool = False
     created_at: datetime
     last_seen: datetime

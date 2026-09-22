@@ -4,8 +4,8 @@
 // It keeps blocking rules synchronized and tracks how many distractions
 // have been blocked.
 
-// const API_BASE_URL = "http://127.0.0.1:8000";
-const API_BASE_URL = "https://deepfocus-backend.vercel.app";
+const API_BASE_URL = "http://127.0.0.1:8000";
+// const API_BASE_URL = "https://deepfocus-backend.vercel.app";
 
 chrome.alarms.create("deepfocus-sync", {
   periodInMinutes: 1,
@@ -53,17 +53,36 @@ async function syncRules(sites, isActive) {
   }
 }
 
+async function handleUnauthorized() {
+  await chrome.storage.local.set({
+    authMode: "guest",
+  });
+
+  await chrome.storage.local.remove([
+    "accessToken",
+    "user",
+  ]);
+
+  try {
+    chrome.runtime.sendMessage({ type: "AUTH_REVOKED" }).catch(() => {});
+  } catch (e) {}
+}
+
 async function syncAccountState() {
   const {
     authMode,
     accessToken,
+    deviceId = null,
     isActive = true,
-    blockedSites: currentLocal = [],
+    pendingAdditions = [],
+    pendingRemovals = [],
   } = await chrome.storage.local.get([
     "authMode",
     "accessToken",
+    "deviceId",
     "isActive",
-    "blockedSites",
+    "pendingAdditions",
+    "pendingRemovals",
   ]);
 
   if (authMode !== "account" || !accessToken) {
@@ -71,26 +90,84 @@ async function syncAccountState() {
   }
 
   try {
+    // ---------------------------------------------------------
+    // 1. PROCESS OFFLINE PENDING ACTIONS
+    // ---------------------------------------------------------
+
+    const nextRemovals = [...(Array.isArray(pendingRemovals) ? pendingRemovals : [])];
+    for (const domain of (Array.isArray(pendingRemovals) ? pendingRemovals : [])) {
+      try {
+        const encodedDomain = encodeURIComponent(domain.trim().toLowerCase());
+        const res = await fetch(
+          `${API_BASE_URL}/api/sites/domain/${encodedDomain}`,
+          {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "X-Device-Id": deviceId || "",
+            },
+          }
+        );
+        if (res.status === 401) {
+          await handleUnauthorized();
+          return;
+        }
+        if (res.ok || res.status === 404) {
+          const idx = nextRemovals.indexOf(domain);
+          if (idx !== -1) nextRemovals.splice(idx, 1);
+        }
+      } catch (err) {
+        console.warn("[DeepFocus] Pending removal error in background:", domain, err);
+      }
+    }
+
+    const nextAdditions = [...(Array.isArray(pendingAdditions) ? pendingAdditions : [])];
+    for (const domain of (Array.isArray(pendingAdditions) ? pendingAdditions : [])) {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/sites`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+            "X-Device-Id": deviceId || "",
+          },
+          body: JSON.stringify({ domain: domain.trim().toLowerCase() }),
+        });
+        if (res.status === 401) {
+          await handleUnauthorized();
+          return;
+        }
+        if (res.ok || res.status === 409) {
+          const idx = nextAdditions.indexOf(domain);
+          if (idx !== -1) nextAdditions.splice(idx, 1);
+        }
+      } catch (err) {
+        console.warn("[DeepFocus] Pending addition error in background:", domain, err);
+      }
+    }
+
+    await chrome.storage.local.set({
+      pendingAdditions: nextAdditions,
+      pendingRemovals: nextRemovals,
+    });
+
+    // ---------------------------------------------------------
+    // 2. FETCH CANONICAL CLOUD STATE
+    // ---------------------------------------------------------
+
     const response = await fetch(
       `${API_BASE_URL}/api/sync`,
       {
         method: "GET",
         headers: {
           Authorization: `Bearer ${accessToken}`,
+          "X-Device-Id": deviceId || "",
         },
       }
     );
 
     if (response.status === 401) {
-      await chrome.storage.local.set({
-        authMode: "guest",
-      });
-
-      await chrome.storage.local.remove([
-        "accessToken",
-        "user",
-      ]);
-
+      await handleUnauthorized();
       return;
     }
 
@@ -100,32 +177,13 @@ async function syncAccountState() {
 
     const data = await response.json();
 
-    const cloudSites = (data.blocked_sites || []).map(
-      (site) => site.domain
-    );
+    const cloudSites = (data.blocked_sites || [])
+      .map((site) => site.domain.trim().toLowerCase())
+      .sort();
 
-    // Merge: DO NOT wipe local sites if cloud returns empty or partial list
-    const merged = Array.from(
-      new Set([...currentLocal, ...cloudSites])
-    ).sort();
-
-    // Reconcile: upload any local sites not yet in the cloud
-    const cloudDomainSet = new Set(cloudSites);
-    for (const localDomain of currentLocal) {
-      if (!cloudDomainSet.has(localDomain)) {
-        try {
-          await fetch(`${API_BASE_URL}/api/sites`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify({ domain: localDomain }),
-          });
-        } catch (e) {
-          console.warn("[DeepFocus] Could not sync local site to cloud:", localDomain, e);
-        }
-      }
+    const cloudSiteMapObj = {};
+    for (const site of (data.blocked_sites || [])) {
+      cloudSiteMapObj[site.domain.trim().toLowerCase()] = site.id;
     }
 
     const newIsActive =
@@ -134,12 +192,14 @@ async function syncAccountState() {
         : isActive;
 
     await chrome.storage.local.set({
-      blockedSites: merged,
+      blockedSites: cloudSites,
       isActive: newIsActive,
+      cloudSiteMap: cloudSiteMapObj,
+      syncVersion: data.sync_version,
     });
 
     await syncRules(
-      merged,
+      cloudSites,
       newIsActive
     );
   } catch (error) {
@@ -258,7 +318,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(
         accessToken
       ) {
         try {
-          await fetch(
+          const blockRes = await fetch(
             `${API_BASE_URL}/api/block-events`,
             {
               method: "POST",
@@ -266,6 +326,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(
                 "Content-Type": "application/json",
                 Authorization:
                   `Bearer ${accessToken}`,
+                "X-Device-Id": deviceId || "",
               },
               body: JSON.stringify({
                 domain: matchedSite,
@@ -273,6 +334,9 @@ chrome.webNavigation.onBeforeNavigate.addListener(
               }),
             }
           );
+          if (blockRes.status === 401) {
+            await handleUnauthorized();
+          }
         } catch (error) {
           console.error(
             "Failed to record block event:",

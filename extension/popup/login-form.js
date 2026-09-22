@@ -182,6 +182,7 @@ async function registerUser() {
 
 async function loginUser() {
   let response;
+  const deviceId = typeof getDeviceId === "function" ? await getDeviceId() : null;
   try {
     response = await fetch(
       `${API_BASE_URL}/api/auth/login`,
@@ -193,6 +194,7 @@ async function loginUser() {
         body: JSON.stringify({
           email: emailInput.value.trim(),
           password: passwordInput.value,
+          device_id: deviceId || null,
         }),
       }
     );
@@ -267,6 +269,37 @@ form.addEventListener("submit", async (event) => {
 
 
     // -------------------------
+    // MIGRATE GUEST SITES (ONE-TIME)
+    // -------------------------
+
+    try {
+      const { authMode: priorMode = "guest", blockedSites: guestSites = [] } =
+        await chrome.storage.local.get(["authMode", "blockedSites"]);
+
+      if (priorMode === "guest" && Array.isArray(guestSites) && guestSites.length > 0) {
+        for (const rawDomain of guestSites) {
+          const domain = (typeof rawDomain === "string" ? rawDomain.trim().toLowerCase() : "");
+          if (!domain) continue;
+
+          try {
+            await fetch(`${API_BASE_URL}/api/sites`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${loginData.access_token}`,
+              },
+              body: JSON.stringify({ domain }),
+            });
+          } catch (e) {
+            console.warn("[DeepFocus] Failed to migrate guest site:", domain, e);
+          }
+        }
+      }
+    } catch (migErr) {
+      console.warn("[DeepFocus] Error during guest migration:", migErr);
+    }
+
+    // -------------------------
     // SAVE AUTH STATE
     // -------------------------
 
@@ -321,8 +354,7 @@ form.addEventListener("submit", async (event) => {
     );
 
     submitBtn.disabled = false;
-
-    updateFormMode();
+    submitBtn.textContent = isLoginMode ? "Login" : "Create account";
   }
 });
 
@@ -330,5 +362,8 @@ form.addEventListener("submit", async (event) => {
 // ---------------------------------------------------------
 // INITIAL UI
 // ---------------------------------------------------------
+
+emailInput.addEventListener("input", clearError);
+passwordInput.addEventListener("input", clearError);
 
 updateFormMode();

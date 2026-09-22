@@ -142,6 +142,7 @@ def get_user_details(
                 "browser": device.browser,
                 "operating_system": device.operating_system,
                 "extension_version": device.extension_version,
+                "is_revoked": device.is_revoked,
                 "created_at": device.created_at,
                 "last_seen": device.last_seen,
             }
@@ -219,6 +220,7 @@ def get_user_devices(
             "browser": device.browser,
             "operating_system": device.operating_system,
             "extension_version": device.extension_version,
+            "is_revoked": device.is_revoked,
             "created_at": device.created_at,
             "last_seen": device.last_seen,
         }
@@ -333,11 +335,12 @@ def revoke_user_device(
             detail="Device not found.",
         )
 
-    db.delete(device)
-
+    device.is_revoked = True
+    user.sync_version += 1
     db.commit()
 
     return {
         "message": "Device revoked.",
         "device_id": device_id,
+        "is_revoked": True,
     }

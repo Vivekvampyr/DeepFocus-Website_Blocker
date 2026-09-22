@@ -25,6 +25,7 @@ from ..services.auth_service import (
 from ..models.password_reset_token import PasswordResetToken
 from ..services.email_service import send_password_reset_email
 from ..models.user import User
+from ..models.device import Device
 
 load_dotenv()
 
@@ -41,7 +42,11 @@ JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(
 FRONTEND_URL = os.getenv("FRONTEND_URL")
 
 
-def create_access_token(user_id: int, role: str) -> str:
+def create_access_token(
+    user_id: int,
+    role: str,
+    device_id: str | None = None,
+) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES
     )
@@ -51,6 +56,9 @@ def create_access_token(user_id: int, role: str) -> str:
         "role": role,
         "exp": expire,
     }
+
+    if device_id:
+        payload["device_id"] = device_id
 
     return jwt.encode(
         payload,
@@ -113,7 +121,26 @@ def login(
             detail="This account is inactive.",
         )
 
-    access_token = create_access_token(user.id, user.role)
+    # If this device was previously revoked, successful password authentication
+    # re-authorizes it.
+    if data.device_id:
+        device = (
+            db.query(Device)
+            .filter(
+                Device.user_id == user.id,
+                Device.device_id == data.device_id,
+            )
+            .first()
+        )
+        if device and device.is_revoked:
+            device.is_revoked = False
+            db.commit()
+
+    access_token = create_access_token(
+        user.id,
+        user.role,
+        device_id=data.device_id,
+    )
 
     return {
         "access_token": access_token,

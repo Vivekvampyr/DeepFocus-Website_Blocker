@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.device import Device
@@ -30,6 +30,12 @@ def register_device(
         )
         .first()
     )
+
+    if device and device.is_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This device has been revoked.",
+        )
 
     now = datetime.now(timezone.utc)
 

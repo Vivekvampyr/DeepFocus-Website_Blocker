@@ -85,6 +85,39 @@ def add_blocked_site(
     return site
 
 
+@router.delete("/domain/{domain:path}")
+def delete_blocked_site_by_domain(
+    domain: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    normalized = normalize_domain(domain)
+
+    site = (
+        db.query(BlockedSite)
+        .filter(
+            BlockedSite.domain == normalized,
+            BlockedSite.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not site:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Blocked site not found.",
+        )
+
+    db.delete(site)
+    current_user.sync_version += 1
+    db.commit()
+
+    return {
+        "message": "Blocked site removed.",
+        "domain": normalized,
+    }
+
+
 @router.delete("/{site_id}")
 def delete_blocked_site(
     site_id: int,

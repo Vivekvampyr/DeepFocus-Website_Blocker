@@ -1,5 +1,5 @@
-// const API_BASE_URL = "http://127.0.0.1:8000";
-const API_BASE_URL = "https://deepfocus-backend.vercel.app";
+const API_BASE_URL = "http://127.0.0.1:8000";
+// const API_BASE_URL = "https://deepfocus-backend.vercel.app";
 
 
 const form = document.getElementById(
@@ -119,7 +119,7 @@ form.addEventListener(
         );
       }
 
-      
+
       showSuccess(
         "If an account exists, a password reset link has been sent to your email."
       );
@@ -137,7 +137,7 @@ form.addEventListener(
 
       showError(
         error.message ||
-          "Unable to send the reset link. Please try again."
+        "Unable to send the reset link. Please try again."
       );
 
 

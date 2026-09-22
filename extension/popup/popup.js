@@ -262,8 +262,9 @@ async function addSite(rawValue) {
           cloudSiteMap: cloudSiteMapObj,
         });
       })
-      .catch((error) => {
-        console.warn("Add cloud site in background failed:", error);
+      .catch(async (error) => {
+        console.warn("Add cloud site failed, queueing offline addition:", error);
+        await queuePendingAddition(domain);
       });
   }
 }
@@ -290,11 +291,14 @@ async function removeSite(domain) {
     const cloudSiteMapObj = Object.fromEntries(cloudSiteIds);
     chrome.storage.local.set({ cloudSiteMap: cloudSiteMapObj });
 
-    if (siteId) {
-      deleteCloudSite(siteId).catch((error) => {
-        console.warn("Remove cloud site in background failed:", error);
-      });
-    }
+    const deletePromise = siteId
+      ? deleteCloudSite(siteId).catch(() => deleteCloudSiteByDomain(domain))
+      : deleteCloudSiteByDomain(domain);
+
+    deletePromise.catch(async (error) => {
+      console.warn("Remove cloud site failed, queueing offline removal:", error);
+      await queuePendingRemoval(domain);
+    });
   }
 }
 
@@ -358,7 +362,7 @@ async function initializeAuth() {
 
 
 // ---------------------------------------------------------
-// CLOUD SYNC (SMART 2-WAY MERGE, NEVER WIPES LOCAL SITES)
+// CLOUD SYNC (AUTHORITATIVE CLOUD STATE WITH OFFLINE QUEUE)
 // ---------------------------------------------------------
 
 async function syncFromCloud() {
@@ -367,6 +371,12 @@ async function syncFromCloud() {
   }
 
   try {
+    // 1. Process any pending offline actions before fetching
+    if (typeof processPendingSyncActions === "function") {
+      await processPendingSyncActions();
+    }
+
+    // 2. Fetch canonical state from cloud
     const state = await fetchCloudSyncState();
 
     if (!state) {
@@ -377,27 +387,17 @@ async function syncFromCloud() {
 
     const cloudSitesList = state.blocked_sites || [];
     const newCloudMap = new Map();
+    const cloudDomains = [];
+
     for (const site of cloudSitesList) {
-      newCloudMap.set(site.domain, site.id);
+      const clean = site.domain.trim().toLowerCase();
+      newCloudMap.set(clean, site.id);
+      cloudDomains.push(clean);
     }
+    cloudDomains.sort();
 
-    // Reconcile: upload any local sites not yet in the cloud
-    const localSitesToUpload = sites.filter((domain) => !newCloudMap.has(domain));
-    for (const domain of localSitesToUpload) {
-      try {
-        const added = await addCloudSite(domain);
-        newCloudMap.set(added.domain, added.id);
-      } catch (e) {
-        console.warn("Could not sync local site to cloud:", domain, e);
-      }
-    }
-
-    // Merge domains without losing any local sites
-    const mergedSites = Array.from(
-      new Set([...sites, ...cloudSitesList.map((s) => s.domain)])
-    ).sort();
-
-    sites = mergedSites;
+    // Canonical list from cloud
+    sites = cloudDomains;
     cloudSiteIds = newCloudMap;
 
     if (state.blocking_enabled !== undefined) {
