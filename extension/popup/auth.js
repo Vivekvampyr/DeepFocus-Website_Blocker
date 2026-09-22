@@ -1,5 +1,5 @@
-const API_BASE_URL = "http://127.0.0.1:8000";
-// const API_BASE_URL = "https://deepfocus-backend.vercel.app";
+// API_BASE_URL is loaded from /config.js
+var API_BASE_URL = typeof API_BASE_URL !== "undefined" ? API_BASE_URL : "http://127.0.0.1:8000";
 
 function parseErrorMessage(data, defaultMsg) {
   if (!data) return defaultMsg;

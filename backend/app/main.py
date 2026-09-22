@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -16,10 +17,22 @@ from .api import admin
 from .api import block_events
 from .api import admin_analytics
 
-
 from fastapi.middleware.cors import CORSMiddleware
 
-Base.metadata.create_all(bind=engine)
+# Only run table creation when explicitly enabled or in local development;
+# never run redundant DDL queries on every cold start in serverless.
+auto_create = os.getenv("AUTO_CREATE_TABLES")
+should_create = (
+    auto_create.lower() in ("true", "1", "yes")
+    if auto_create is not None
+    else not bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+)
+
+if should_create:
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"[Warning] Base.metadata.create_all: {e}")
 
 app = FastAPI(
     title="DeepFocus API",
